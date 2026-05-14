@@ -22,20 +22,37 @@ No cloud API. No account. No telemetry. Audio never leaves your Mac.
   </a>
 </p>
 
-After unzipping, drag **Dictly.app** into `/Applications`.
+### Installing
 
-**First launch only:** right-click the app icon → **Open** → click **Open** in
-the "unidentified developer" dialog. macOS asks once; from then on a normal
-double-click works. (The build is signed but not yet Apple-notarised — on the
-roadmap.)
+1. Unzip the download.
+2. Drag **Dictly.app** into `/Applications`.
+3. Double-click to launch.
 
-If you'd rather skip the right-click dance, run this in Terminal:
+The build is signed with a Developer ID certificate and notarised by Apple,
+so it opens without any Gatekeeper warnings on macOS 15+.
 
-```bash
-xattr -dr com.apple.quarantine /Applications/Dictly.app
-```
+On first launch macOS will ask for **microphone** permission (required) and
+**Accessibility** permission (only needed if you want the transcribed text
+to be auto-pasted into the focused app; without it Dictly falls back to
+clipboard-only mode and you press ⌘V manually).
 
 [All releases & changelogs →](https://github.com/vlr-code/dictly/releases)
+
+## Coming next
+
+Things I'm actively working on for upcoming releases:
+
+- **🌐 Speak-and-translate** — dictate in one language and have the
+  text pasted in another. Useful when you think faster than you type
+  in your second language. Whisper's translation capability is already
+  there; just needs the UI and a target-language picker in Settings.
+- **🔧 F-key hotkeys** — F-keys (and the dedicated 🎤 dictation key on
+  newer keyboards) currently don't bind cleanly in the recorder because
+  it commits the `Fn` modifier before the F-key keycode lands. Fix is
+  in the works.
+
+Got ideas / requests / bug reports? Open an issue —
+<https://github.com/vlr-code/dictly/issues>
 
 ## Highlights
 
