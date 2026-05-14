@@ -14,6 +14,29 @@ clipboard (or auto-pasted into the focused app, depending on build).
 
 No cloud API. No account. No telemetry. Audio never leaves your Mac.
 
+## Download
+
+<p align="center">
+  <a href="https://github.com/vlr-code/dictly/releases/latest/download/Dictly.zip">
+    <img src="https://img.shields.io/github/v/release/vlr-code/dictly?label=Download%20Dictly&style=for-the-badge&logo=apple&color=orange" alt="Download latest Dictly">
+  </a>
+</p>
+
+After unzipping, drag **Dictly.app** into `/Applications`.
+
+**First launch only:** right-click the app icon → **Open** → click **Open** in
+the "unidentified developer" dialog. macOS asks once; from then on a normal
+double-click works. (The build is signed but not yet Apple-notarised — on the
+roadmap.)
+
+If you'd rather skip the right-click dance, run this in Terminal:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Dictly.app
+```
+
+[All releases & changelogs →](https://github.com/vlr-code/dictly/releases)
+
 ## Highlights
 
 - **Global push-to-talk hotkey** (default `Fn`). Configurable in Settings.
