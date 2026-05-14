@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Direct Distribution config (default).
+	  Sandbox is OFF so that:
+	    1. The Accessibility (Universal Access) flow can register the app in TCC's list.
+	    2. CGEvent posting works against any app — needed for auto-paste.
+	  For the App Store target we'll create a parallel entitlements file with app-sandbox=true
+	  and the auto-paste path will be compiled out via `#if APP_STORE`.
+	-->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+</dict>
+</plist>

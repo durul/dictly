@@ -1,0 +1,21 @@
+{
+  "images" : [
+    {
+      "filename" : "menubar-disabled.png",
+      "idiom" : "mac",
+      "scale" : "1x"
+    },
+    {
+      "filename" : "menubar-disabled@2x.png",
+      "idiom" : "mac",
+      "scale" : "2x"
+    }
+  ],
+  "info" : {
+    "author" : "dictly",
+    "version" : 1
+  },
+  "properties" : {
+
+  }
+}

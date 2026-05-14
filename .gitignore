@@ -1,0 +1,86 @@
+# ──────────────────────────────────────────────────────────────────
+# Private / internal — never publish to GitHub
+# ──────────────────────────────────────────────────────────────────
+
+# Internal engineering notes
+CLAUDE.md
+ARCHITECTURE.md
+
+# Design source-of-truth (icons, SVGs, design tokens spec, handoff doc)
+handoff/
+
+# App-Store-specific entitlements file — public repo ships only the
+# Direct distribution build. The sync_to_public.sh script also strips
+# the Release-AppStore configuration and DEVELOPMENT_TEAM from the
+# project file. This belt-and-suspenders rule ensures the entitlements
+# never get committed even if a future sync ever drops them in by accident.
+Dictly/Dictly/Dictly-AppStore.entitlements
+
+# Local Claude/agent state
+.claude/
+.cursorrules
+
+# ──────────────────────────────────────────────────────────────────
+# Bundled Whisper models. The `base` variant (~139 MB) ships in-repo so
+# the app works offline straight after clone. Larger variants (large-v3
+# at ~547 MB etc.) are too big for plain git and must be fetched on
+# demand with `python3 scripts/fetch_bundled_model.py <variant>`.
+# ──────────────────────────────────────────────────────────────────
+Dictly/BundledModels/*
+!Dictly/BundledModels/openai_whisper-base/
+
+# ──────────────────────────────────────────────────────────────────
+# Xcode / Swift build artefacts
+# ──────────────────────────────────────────────────────────────────
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Package.resolved
+
+# ──────────────────────────────────────────────────────────────────
+# macOS / editor noise
+# ──────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+*.swp
+*.swo
+.idea/
+*.xcuserdatad/
+
+# ──────────────────────────────────────────────────────────────────
+# Logs and produced artefacts
+# ──────────────────────────────────────────────────────────────────
+*.log
+*.app
+*.dSYM
+*.dSYM.zip
+*.ipa
+*.xcarchive
+Dictly-*.zip
+
+# Compiled bytecode / packages we don't ship
+*.class
+*.jar
+*.war
+*.py[cod]
+node_modules/
+dist/
+target/
+
+# Large media files
+*.mp4
+*.tiff
+*.avi
+*.flv
+*.mov
+*.wmv

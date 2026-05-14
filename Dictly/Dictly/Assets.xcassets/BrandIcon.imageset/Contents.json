@@ -1,0 +1,18 @@
+{
+  "images" : [
+    {
+      "filename" : "brand-icon.png",
+      "idiom" : "mac",
+      "scale" : "1x"
+    },
+    {
+      "filename" : "brand-icon@2x.png",
+      "idiom" : "mac",
+      "scale" : "2x"
+    }
+  ],
+  "info" : {
+    "author" : "dictly",
+    "version" : 1
+  }
+}
