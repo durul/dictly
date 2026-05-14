@@ -59,6 +59,7 @@ rsync -av --delete \
   --exclude='CLAUDE.md' \
   --exclude='ARCHITECTURE.md' \
   --exclude='handoff/' \
+  --exclude='docs/' \
   \
   --include='Dictly/' \
   --include='Dictly/BundledModels/' \

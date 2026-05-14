@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/hero.png" alt="Dictly — press a hotkey, speak, paste anywhere" width="100%">
+</p>
+
 # Dictly
 
 > Press a hotkey. Speak. Paste anywhere.
