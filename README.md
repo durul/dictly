@@ -117,16 +117,98 @@ done states throughout.
 
 ## Configuration
 
-Settings live in `UserDefaults`. Key options:
+Open Settings from the menu-bar icon → ⚙️ Settings… Everything is configurable
+without restart; changes apply live.
 
-| Setting | Default | Notes |
-| --- | --- | --- |
-| Hotkey | `Fn` | Reassignable in Settings |
-| Mode | Push-to-talk | or toggle |
-| Spoken language | `auto` | ISO 639-1 or `auto` |
-| Quality | Balanced | Fast / Balanced / Best — maps to Whisper's `temperatureFallbackCount` |
-| Auto-paste | On | Falls back to clipboard-only if Accessibility isn't granted |
-| HUD position | Bottom of screen | or under menu bar icon |
+<p align="center">
+  <img src="docs/settings.png" alt="Dictly settings window" width="520">
+</p>
+
+### Hotkey
+
+- **Push-to-talk hotkey** — the key you hold to record. Click **Record** and
+  press your desired combo. Supports both single modifiers (`Fn`, right ⌥,
+  right ⌘, …) registered through `NSEvent.addGlobalMonitor`, and regular
+  key combos (`⌃⌥D`, `⌘⇧Space`, …) registered through Carbon's
+  `RegisterEventHotKey`. Default is `Fn`. Click **End** to clear a binding.
+- **Mode** — *Hold* (push-to-talk: record while pressed, release to transcribe)
+  or *Toggle* (press once to start, press again to stop). Hold-mode is
+  conversational, toggle-mode is better for long-form dictation where you
+  don't want to keep a finger down.
+
+### Speech
+
+- **Spoken language** — pick a single language or set to **Auto-detect**. A
+  pinned language is usually 5-15% faster and noticeably more accurate on
+  short utterances, because Whisper skips the language-detection pass and
+  doesn't second-guess homophones across languages. Use *Auto* only if you
+  actually code-switch.
+- **Quality** — trade-off between speed and resilience against degenerate
+  output (the classic *"1, 2, 3, 1, 2, 3…"* loop Whisper produces on noisy /
+  Bluetooth-warmup audio):
+  - **Fast** — single greedy pass at temperature 0. Quickest, but a bad
+    capture stays bad. Good for built-in mic in a quiet room.
+  - **Balanced** *(default)* — one safety-net retry if the first pass looks
+    degenerate. Costs ~zero on clean audio (the retry is only paid when the
+    first pass had high compression ratio / low avg-logprob), and rescues
+    most loop cases. The right pick for most users.
+  - **Best quality** — up to three retries with progressively more randomness.
+    Pays full transcribe cost on each retry, so noticeably slower on bad
+    audio. Best for noisy environments, accented speech, multi-speaker
+    captures.
+
+  Maps directly to Whisper's `temperatureFallbackCount` (0 / 1 / 3).
+
+### Transcription models
+
+The list shows all variants available from
+[`argmaxinc/whisperkit-coreml`](https://huggingface.co/argmaxinc/whisperkit-coreml)
+plus any models bundled with the .app. The currently active model has a
+**BUNDLED** / **Use** badge.
+
+- Tap **Use** to switch the active model. The switch is instant if the model
+  is already cached; otherwise it downloads first (progress shown inline).
+- Models are cached under `~/Documents/huggingface/models/argmaxinc/whisperkit-coreml/`
+  and reused across launches.
+- Higher tiers (large) are more accurate but slower per second of audio and
+  use more RAM. **base** runs at real-time-factor ≈ 0.05–0.1 on M-series and
+  handles 99 languages just fine for chat / messages. **large-v3** is the
+  go-to for transcribing meeting recordings or anything where word-level
+  accuracy matters.
+- English-only variants (suffix `.en`) are faster and slightly more accurate
+  on English, but obviously can't transcribe anything else.
+- Tap the **refresh** icon in the section header to re-fetch the catalog
+  from HuggingFace.
+
+### Behaviour
+
+- **Auto-paste into the focused app** — after transcription, simulate ⌘V
+  into whatever app currently has focus. Off → text stays on the clipboard
+  and you press ⌘V manually. Requires the Accessibility permission below.
+- **Restore clipboard after paste** — when auto-paste is on, Dictly briefly
+  hijacks the system clipboard. With this on, it snapshots the previous
+  clipboard contents and restores them 400 ms after the paste, so you don't
+  lose whatever you had copied. Off → the transcribed text remains the new
+  clipboard contents.
+- **Show floating HUD while dictating** — the pill-shaped indicator with the
+  live waveform that appears while recording / transcribing. Off → fully
+  silent operation; the only feedback is the menu-bar icon state.
+- **HUD position** — *Bottom of screen* (centred ~40 pt above the Dock,
+  default) or *Top — under Dictly icon* (anchored under the menu-bar icon,
+  useful if you dictate into apps that have their own bottom UI like Slack
+  or Notes).
+
+### Permissions
+
+- **Microphone** — requested on first launch via the standard macOS prompt.
+  Required.
+- **Universal Access (Accessibility)** — required only for auto-paste
+  (simulating ⌘V into other apps). Without it, Dictly still works in
+  clipboard-only mode: it copies the text and you press ⌘V yourself. The
+  **Open Universal Access** button deeplinks straight to the right pane in
+  System Settings.
+
+All preferences live in `UserDefaults`; nothing leaves your Mac.
 
 ## Logging
 
