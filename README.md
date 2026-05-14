@@ -10,14 +10,13 @@ A free, open-source macOS menu-bar dictation app. Hold a global hotkey, speak,
 release — your speech is transcribed locally by Whisper and placed on the
 clipboard (or auto-pasted into the focused app, depending on build).
 
-**Apple Silicon only · macOS 15+ · 99 languages · 100% on-device**
+**Free · Apple Silicon only · macOS 15+ · 99 languages · 100% on-device**
 
 No cloud API. No account. No telemetry. Audio never leaves your Mac.
 
 ## Highlights
 
-- **Global push-to-talk hotkey** (default `⌥Space` on the App Store build, `Fn`
-  on the Direct build). Configurable in Settings.
+- **Global push-to-talk hotkey** (default `Fn`). Configurable in Settings.
 - **OpenAI Whisper via [WhisperKit](https://github.com/argmaxinc/argmax-oss-swift)**,
   running on Apple's CoreML / Neural Engine. Real-time-factor ≈ 0.1–0.3 on M-series.
 - **99 languages** supported by Whisper out of the box. Auto-detection or pinned
@@ -27,11 +26,8 @@ No cloud API. No account. No telemetry. Audio never leaves your Mac.
   large-v3-turbo, etc.) are downloadable from HuggingFace inside the app, or
   fetchable up front via `scripts/fetch_bundled_model.py <variant>`.
 - **Pure AppKit**, no SwiftUI dependencies.
-- **Two distribution paths**:
-  - **Direct** (default) — full functionality, auto-pastes via simulated ⌘V
-    (needs Accessibility permission).
-  - **App Store** (`#if APP_STORE`) — clipboard-only, sandboxed, no Accessibility
-    request. Same source, different build configuration.
+- **Auto-paste into the focused app** via simulated ⌘V (needs the standard
+  macOS Accessibility permission, granted once on first launch).
 
 ## Project layout
 
@@ -114,23 +110,22 @@ open "$(find ~/Library/Developer/Xcode/DerivedData -name Dictly.app -type d | he
 `AudioRecorder` boots a fresh `AVAudioEngine` and starts streaming 16 kHz mono
 Float32 PCM into a buffer. On release, the buffer is handed to
 `WhisperKitTranscriber`, which calls Whisper on the bundled CoreML model. The
-resulting text passes through a `TextPostProcessor` and is then either pasted
-into the focused app (Direct build, via `CGEvent` simulating ⌘V) or copied to
-the clipboard for the user to paste manually (App Store build). A floating HUD
-shows recording/transcribing/done states throughout.
+resulting text passes through a `TextPostProcessor` and is then pasted into the
+focused app via `CGEvent` simulating ⌘V (with a clipboard-only fallback if
+Accessibility is not yet granted). A floating HUD shows recording/transcribing/
+done states throughout.
 
 ## Configuration
 
-Settings live in `UserDefaults` (or the App Sandbox container for the App Store
-build). Key options:
+Settings live in `UserDefaults`. Key options:
 
 | Setting | Default | Notes |
 | --- | --- | --- |
-| Hotkey | `Fn` (Direct) / `⌥Space` (App Store) | Reassignable |
+| Hotkey | `Fn` | Reassignable in Settings |
 | Mode | Push-to-talk | or toggle |
 | Spoken language | `auto` | ISO 639-1 or `auto` |
 | Quality | Balanced | Fast / Balanced / Best — maps to Whisper's `temperatureFallbackCount` |
-| Auto-paste | On (Direct) / N/A (App Store) | Requires Accessibility on Direct |
+| Auto-paste | On | Falls back to clipboard-only if Accessibility isn't granted |
 | HUD position | Bottom of screen | or under menu bar icon |
 
 ## Logging
