@@ -107,11 +107,16 @@ final class AudioRecorder {
         startedAt = Date()
         tapCallbacks = 0
 
-        // `format: nil` lets AVAudioEngine pick the bus's natural format itself —
-        // the hardware-native rate (44.1k/48k for built-in mic, 16k for BT SCO,
-        // 24k for AirPods AAC-LC ELD voice mode). Specifying a format manually
-        // pre-prepare can wedge the engine into a silent state.
-        engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
+        // After bindInputToDefaultDevice rebinds the AUHAL's underlying device
+        // via Core Audio APIs, AVAudioInputNode keeps the *previous* device's
+        // format in its cache. `format: nil` then installs the tap at the
+        // stale rate (e.g. 96k from the prior device) while the new HW is at
+        // 48k — AVAudioEngineGraph rejects the mismatch with -10868 at
+        // engine.start(). Read the AU's real current stream format and pass
+        // it explicitly so the bus negotiates against the truth.
+        let tapFormat = Self.actualInputFormat(engine: engine)
+            ?? engine.inputNode.outputFormat(forBus: 0)
+        engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { [weak self] buffer, _ in
             guard let self else { return }
             self.processTap(buffer: buffer)
         }
@@ -345,13 +350,71 @@ final class AudioRecorder {
             &idVar,
             UInt32(MemoryLayout<AudioDeviceID>.size)
         )
+
+        // Changing CurrentDevice updates the input scope (bus 1) to the new
+        // HW format, but the output scope keeps the *previous* device's
+        // client format. AVAudioEngine compares the two at graph init and
+        // panics with "Format mismatch: input hw 48k, client format 96k"
+        // followed by -10868 / "Failed to create tap, config change pending".
+        // Mirror the new HW format onto the output scope so the AU's two
+        // sides agree before we re-initialize.
+        var hwFormat = AudioStreamBasicDescription()
+        var hwSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        let hwReadStatus = AudioUnitGetProperty(
+            unit,
+            kAudioUnitProperty_StreamFormat,
+            kAudioUnitScope_Input,
+            1,
+            &hwFormat,
+            &hwSize
+        )
+        var syncStatus: OSStatus = noErr
+        if hwReadStatus == noErr {
+            syncStatus = AudioUnitSetProperty(
+                unit,
+                kAudioUnitProperty_StreamFormat,
+                kAudioUnitScope_Output,
+                1,
+                &hwFormat,
+                hwSize
+            )
+        }
+
         let initStatus = AudioUnitInitialize(unit)
 
         if setStatus == noErr {
-            log.info("bindInput: rebound \(currentID) → \(defaultID)")
+            log.info("bindInput: rebound \(currentID) → \(defaultID) hw=\(hwFormat.mSampleRate, format: .fixed(precision: 0))Hz/\(hwFormat.mChannelsPerFrame)ch syncStatus=\(syncStatus)")
         } else {
             log.error("bindInput: SetProperty failed, OSStatus=\(setStatus) (uninit=\(uninitStatus) init=\(initStatus))")
         }
+    }
+
+    /// Reads the AUHAL input unit's actual output stream format directly via
+    /// the Core Audio property API. Necessary after `bindInputToDefaultDevice`
+    /// because `engine.inputNode.outputFormat(forBus: 0)` returns
+    /// AVAudioInputNode's *cached* format from before the device rebind —
+    /// pulling the truth from the AU avoids the cached/actual format
+    /// mismatch that otherwise trips AVAudioEngineGraph with -10868.
+    ///
+    /// Bus 1, output scope: the AUHAL's "audio going into the engine from the
+    /// hardware" side, which is what the tap on input bus 0 ultimately reads.
+    private static func actualInputFormat(engine: AVAudioEngine) -> AVAudioFormat? {
+        guard let unit = engine.inputNode.audioUnit else { return nil }
+        var asbd = AudioStreamBasicDescription()
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        let status = AudioUnitGetProperty(
+            unit,
+            kAudioUnitProperty_StreamFormat,
+            kAudioUnitScope_Output,
+            1,
+            &asbd,
+            &size
+        )
+        guard status == noErr, asbd.mSampleRate > 0 else {
+            log.notice("actualInputFormat: AudioUnitGetProperty failed, OSStatus=\(status)")
+            return nil
+        }
+        return AVAudioFormat(streamDescription: &asbd)
     }
 }
 
