@@ -264,6 +264,15 @@ A pipeline timing line lands at `.notice` level after each dictation:
 ⏱️ pipeline: total=1.08s (transcribe=1.05s · post=0.00s · insert=0.03s) for 3.07s audio
 ```
 
+## Contributors
+
+Huge thanks to everyone who's sent a PR, opened an issue, or just tried
+Dictly and reported back.
+
+<a href="https://github.com/vlr-code/dictly/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=vlr-code/dictly" alt="Contributors" />
+</a>
+
 ## License
 
 See [LICENSE](LICENSE).
