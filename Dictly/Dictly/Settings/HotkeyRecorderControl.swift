@@ -33,6 +33,17 @@ final class HotkeyRecorderControl: NSView {
     private var lastFlags: NSEvent.ModifierFlags = []
     private var recording = false
 
+    /// Modifier-only commits are deferred briefly so a follow-up keyDown can
+    /// override them. macOS sets the `.function` flag immediately when an
+    /// F-row key (or the dedicated 🎤 dictation key) is pressed, *before*
+    /// the matching `keyDown` event arrives. Without the delay, the recorder
+    /// commits "Fn" the instant that flagsChanged fires and the F-key
+    /// keycode is never seen. The window is short enough that a deliberate
+    /// solo Fn tap still feels instant.
+    private var pendingSoloCombo: KeyCombo?
+    private var pendingSoloTimer: Timer?
+    private static let modifierCommitDelay: TimeInterval = 0.2
+
     init(combo: KeyCombo) {
         self.combo = combo
         super.init(frame: .zero)
@@ -106,6 +117,7 @@ final class HotkeyRecorderControl: NSView {
     deinit {
         if let m = monitor { NSEvent.removeMonitor(m) }
         if let m = flagsMonitor { NSEvent.removeMonitor(m) }
+        pendingSoloTimer?.invalidate()
     }
 
     private func updateLabel() {
@@ -121,6 +133,7 @@ final class HotkeyRecorderControl: NSView {
 
     private func startMonitors() {
         lastFlags = []
+        cancelPendingSolo()
 
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             guard let self, self.recording else { return event }
@@ -130,6 +143,11 @@ final class HotkeyRecorderControl: NSView {
                 self.cancel()
                 return nil
             }
+            // A keyDown wins over a pending modifier-only commit: F-row keys
+            // and the dictation key emit `.function` via flagsChanged just
+            // before their keyDown lands. Discarding the pending Fn lets the
+            // F-key keycode become the actual binding.
+            self.cancelPendingSolo()
             self.commit(.combo(keyCode: event.keyCode, modifiers: mods))
             return nil
         }
@@ -137,11 +155,24 @@ final class HotkeyRecorderControl: NSView {
         flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
             guard let self, self.recording else { return event }
             let now = event.modifierFlags
-            // Detect a modifier-only press: a flag became active that wasn't before, with no others.
-            let solo = Self.detectSolo(previous: self.lastFlags, current: now, event: event)
+            let previous = self.lastFlags
+            let solo = Self.detectSolo(previous: previous, current: now, event: event)
             self.lastFlags = now
+
             if let solo {
-                self.commit(KeyCombo(kind: .modifierOnly, solo: solo, keyCode: nil, modifierFlags: 0))
+                // Don't commit yet — a keyDown may follow within
+                // `modifierCommitDelay` and supersede this. The timer fires
+                // the commit if no keyDown arrives in time.
+                self.armPendingSolo(KeyCombo(kind: .modifierOnly, solo: solo, keyCode: nil, modifierFlags: 0))
+                return nil
+            }
+
+            // No new modifier added — typically a release. If a solo is
+            // pending and the modifier-set just shrank, the user tapped the
+            // modifier on its own; commit immediately so the binding feels
+            // snappy rather than waiting out the timer.
+            if self.pendingSoloCombo != nil && now.rawValue < previous.rawValue {
+                self.firePendingSoloNow()
                 return nil
             }
             return event
@@ -153,10 +184,32 @@ final class HotkeyRecorderControl: NSView {
         if let m = flagsMonitor { NSEvent.removeMonitor(m); flagsMonitor = nil }
     }
 
+    private func armPendingSolo(_ combo: KeyCombo) {
+        pendingSoloCombo = combo
+        pendingSoloTimer?.invalidate()
+        pendingSoloTimer = Timer.scheduledTimer(withTimeInterval: Self.modifierCommitDelay,
+                                                 repeats: false) { [weak self] _ in
+            self?.firePendingSoloNow()
+        }
+    }
+
+    private func firePendingSoloNow() {
+        guard let pending = pendingSoloCombo else { return }
+        cancelPendingSolo()
+        commit(pending)
+    }
+
+    private func cancelPendingSolo() {
+        pendingSoloCombo = nil
+        pendingSoloTimer?.invalidate()
+        pendingSoloTimer = nil
+    }
+
     private func cancel() {
         recording = false
         recordButton.title = "Record"
         stopMonitors()
+        cancelPendingSolo()
         updateLabel()
     }
 
@@ -164,6 +217,7 @@ final class HotkeyRecorderControl: NSView {
         recording = false
         recordButton.title = "Record"
         stopMonitors()
+        cancelPendingSolo()
         combo = newCombo
         onChange?(newCombo)
     }
