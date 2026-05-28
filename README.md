@@ -252,16 +252,34 @@ All preferences live in `UserDefaults`; nothing leaves your Mac.
 
 ## Logging
 
-All logs use `os.Logger` with subsystem `com.mydear.voicetotext`:
+Logs are mirrored to both Apple's Unified Logging system and a rotating local
+file under `~/Library/Logs/Dictly/`.
+
+Unified Logging:
 
 ```bash
 log stream --predicate 'subsystem == "com.mydear.voicetotext"' --info
 ```
 
+Local files:
+
+```bash
+tail -f ~/Library/Logs/Dictly/Dictly.log
+tail -f ~/Library/Logs/Dictly/Dictly-crash.log
+ls -la ~/Library/Logs/Dictly/MetricKit/
+```
+
+`Dictly.log` rotates at 2 MB and keeps five archives
+(`Dictly.1.log` ... `Dictly.5.log`). `Dictly-crash.log` records uncaught
+Objective-C exceptions and fatal signals (`SIGABRT`, `SIGSEGV`, `SIGBUS`,
+`SIGILL`, `SIGFPE`, `SIGTRAP`) with a best-effort backtrace.
+MetricKit crash, hang, CPU exception, disk write exception, and metric
+payloads are persisted as JSON under `MetricKit/` when macOS delivers them.
+
 A pipeline timing line lands at `.notice` level after each dictation:
 
 ```
-⏱️ pipeline: total=1.08s (transcribe=1.05s · post=0.00s · insert=0.03s) for 3.07s audio
+pipeline: total=1.08s (transcribe=1.05s post=0.00s insert=0.03s) for 3.07s audio
 ```
 
 ## Contributors
