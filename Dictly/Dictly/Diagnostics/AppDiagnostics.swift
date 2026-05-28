@@ -88,11 +88,13 @@ final class AppDiagnostics: @unchecked Sendable {
     let localLog = RotatingLocalLog()
 
     private let lifecycleLock = NSLock()
+    private let metricKitDiagnostics = MetricKitDiagnostics()
     private var isStarted = false
 
     private init() {}
 
     var logURL: URL { localLog.logURL }
+    var metricKitDirectory: URL { localLog.metricKitDirectory }
 
     func start() {
         lifecycleLock.lock()
@@ -102,6 +104,7 @@ final class AppDiagnostics: @unchecked Sendable {
         isStarted = true
 
         localLog.prepare()
+        metricKitDiagnostics.start(outputDirectory: localLog.metricKitDirectory)
 
         writeRuntimeHeader()
     }
@@ -113,6 +116,7 @@ final class AppDiagnostics: @unchecked Sendable {
               file: "AppDiagnostics",
               line: 0)
         localLog.flush()
+        metricKitDiagnostics.stop()
     }
 
     func write(level: AppLogLevel,
@@ -148,7 +152,7 @@ final class AppDiagnostics: @unchecked Sendable {
 
         writeSync(level: .notice,
                   category: "Diagnostics",
-                  message: "Diagnostics started; version=\(version) build=\(build) pid=\(pid) os=\(os) log=\(logURL.path)",
+                  message: "Diagnostics started; version=\(version) build=\(build) pid=\(pid) os=\(os) log=\(logURL.path) metricKit=\(metricKitDirectory.path)",
                   file: "AppDiagnostics",
                   line: 0)
     }
