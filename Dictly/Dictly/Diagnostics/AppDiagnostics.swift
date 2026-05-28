@@ -94,6 +94,7 @@ final class AppDiagnostics: @unchecked Sendable {
     private init() {}
 
     var logURL: URL { localLog.logURL }
+    var crashLogURL: URL { localLog.crashLogURL }
     var metricKitDirectory: URL { localLog.metricKitDirectory }
 
     func start() {
@@ -104,6 +105,7 @@ final class AppDiagnostics: @unchecked Sendable {
         isStarted = true
 
         localLog.prepare()
+        SignalCrashReporter.install(crashLogURL: localLog.crashLogURL)
         metricKitDiagnostics.start(outputDirectory: localLog.metricKitDirectory)
 
         writeRuntimeHeader()
@@ -152,7 +154,7 @@ final class AppDiagnostics: @unchecked Sendable {
 
         writeSync(level: .notice,
                   category: "Diagnostics",
-                  message: "Diagnostics started; version=\(version) build=\(build) pid=\(pid) os=\(os) log=\(logURL.path) metricKit=\(metricKitDirectory.path)",
+                  message: "Diagnostics started; version=\(version) build=\(build) pid=\(pid) os=\(os) log=\(logURL.path) crashLog=\(crashLogURL.path) metricKit=\(metricKitDirectory.path)",
                   file: "AppDiagnostics",
                   line: 0)
     }
