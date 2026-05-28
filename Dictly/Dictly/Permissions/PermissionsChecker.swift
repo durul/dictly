@@ -2,12 +2,11 @@ import AppKit
 import AVFoundation
 import ApplicationServices
 import CoreGraphics
-import OSLog
 
 @MainActor
 enum PermissionsChecker {
 
-    private static let log = Logger(subsystem: "com.mydear.voicetotext", category: "Permissions")
+    private static let log = AppLogger(category: "Permissions")
 
     // MARK: Microphone
 
@@ -33,26 +32,33 @@ enum PermissionsChecker {
     // MARK: Accessibility (auto-paste path; not applicable to App Store builds)
 
     static var isAccessibilityGranted: Bool {
-        AXIsProcessTrusted()
+        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false]
+        return AXIsProcessTrustedWithOptions(opts as CFDictionary)
     }
 
-    static func promptAccessibilityIfNeeded() {
-        let systemElement = AXUIElementCreateSystemWide()
-        var dummy: AnyObject?
-        _ = AXUIElementCopyAttributeValue(systemElement,
-                                           kAXFocusedUIElementAttribute as CFString,
-                                           &dummy)
+    static func promptAccessibilityIfNeeded(reason: String = "manual") {
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-        _ = AXIsProcessTrustedWithOptions(opts as CFDictionary)
+        let trusted = AXIsProcessTrustedWithOptions(opts as CFDictionary)
 
-        log.info("Accessibility prompt requested; trusted=\(self.isAccessibilityGranted, privacy: .public)")
+        log.info("Accessibility prompt requested; reason=\(reason) trusted=\(trusted) bundleID=\(Bundle.main.bundleIdentifier ?? "unknown") bundlePath=\(Bundle.main.bundleURL.path) executable=\(Bundle.main.executableURL?.path ?? "unknown")")
     }
 
     static func openAccessibilitySettings() {
-        promptAccessibilityIfNeeded()
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
+        let candidates = [
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility",
+            "x-apple.systempreferences:com.apple.preference.security"
+        ]
+
+        for raw in candidates {
+            guard let url = URL(string: raw) else { continue }
+            if NSWorkspace.shared.open(url) {
+                log.info("Opened Accessibility settings url=\(raw)")
+                return
+            }
         }
+
+        log.error("Failed to open Accessibility settings")
     }
 
     static func openMicrophoneSettings() {
@@ -62,4 +68,3 @@ enum PermissionsChecker {
     }
 
 }
-
