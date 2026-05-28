@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import OSLog
 
 /// Side-channel knowledge of WhisperKit's on-disk model layout.
 ///
@@ -11,7 +10,7 @@ import OSLog
 @MainActor
 enum ModelManager {
 
-    private static let log = Logger(subsystem: "com.mydear.voicetotext", category: "ModelManager")
+    private static let log = AppLogger(category: "ModelManager")
 
     /// Root directory under which all WhisperKit models live for this app.
     static var cacheRoot: URL {
@@ -111,7 +110,7 @@ enum ModelManager {
         let url = cacheURL(for: modelID)
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         try FileManager.default.removeItem(at: url)
-        log.info("Deleted model \(modelID, privacy: .public)")
+        log.info("Deleted model \(modelID)")
     }
 
     static func reveal(_ modelID: String) {

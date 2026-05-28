@@ -1,6 +1,5 @@
 import AppKit
 import Carbon.HIToolbox
-import OSLog
 
 /// System-wide hotkey listener. Uses **Carbon `RegisterEventHotKey`** — the same API
 /// every other macOS hotkey app uses (Alfred, Raycast, BetterTouchTool, KeyboardShortcuts,
@@ -16,7 +15,7 @@ import OSLog
 @MainActor
 final class HotkeyManager {
 
-    private static let log = Logger(subsystem: "com.mydear.voicetotext", category: "Hotkey")
+    private static let log = AppLogger(category: "Hotkey")
 
     var onPress: (() -> Void)?
     var onRelease: (() -> Void)?
@@ -59,7 +58,7 @@ final class HotkeyManager {
         case .modifierOnly:
             installModifierMonitor()
         }
-        Self.log.info("HotkeyManager.start kind=\(String(describing: self.combo.kind), privacy: .public) combo=\(self.combo.displayName, privacy: .public)")
+        Self.log.info("HotkeyManager.start kind=\(String(describing: self.combo.kind)) combo=\(self.combo.displayName)")
     }
 
     func stop() {

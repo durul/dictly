@@ -1,5 +1,4 @@
 import Foundation
-import OSLog
 
 #if canImport(WhisperKit)
 import WhisperKit
@@ -21,7 +20,7 @@ import WhisperKit
 nonisolated
 final class WhisperKitTranscriber: Transcriber, @unchecked Sendable {
 
-    private static let log = Logger(subsystem: "com.mydear.voicetotext", category: "WhisperKit")
+    private static let log = AppLogger(category: "WhisperKit")
 
     private var pipe: WhisperKit?
     private var loadedID: String?
@@ -36,9 +35,9 @@ final class WhisperKitTranscriber: Transcriber, @unchecked Sendable {
 
         let bundledFolder = Self.bundledModelFolder(for: modelID)
         if bundledFolder != nil {
-            Self.log.info("Loading bundled model \(modelID, privacy: .public)")
+            Self.log.info("Loading bundled model \(modelID)")
         } else {
-            Self.log.info("Loading remote model \(modelID, privacy: .public)")
+            Self.log.info("Loading remote model \(modelID)")
         }
         await MainActor.run { progress(0.0) }
 
@@ -99,7 +98,7 @@ final class WhisperKitTranscriber: Transcriber, @unchecked Sendable {
         warmOpts.sampleLength = 1
         let dummy = [Float](repeating: 0, count: 16_000)
         _ = try? await kit.transcribe(audioArray: dummy, decodeOptions: warmOpts)
-        Self.log.info("WhisperKit warmup: \(CFAbsoluteTimeGetCurrent() - warmStart, format: .fixed(precision: 2))s")
+        Self.log.info("WhisperKit warmup: \(String(format: "%.2f", CFAbsoluteTimeGetCurrent() - warmStart))s")
 
         await MainActor.run { progress(1.0) }
     }
@@ -141,7 +140,7 @@ final class WhisperKitTranscriber: Transcriber, @unchecked Sendable {
         let elapsed = CFAbsoluteTimeGetCurrent() - t0
         let audioSec = Double(samples.count) / 16_000.0
         let rtf = audioSec > 0 ? elapsed / audioSec : 0
-        Self.log.info("kit.transcribe: \(elapsed, format: .fixed(precision: 2))s for \(audioSec, format: .fixed(precision: 2))s audio (RTF=\(rtf, format: .fixed(precision: 2)))")
+        Self.log.info("kit.transcribe: \(String(format: "%.2f", elapsed))s for \(String(format: "%.2f", audioSec))s audio (RTF=\(String(format: "%.2f", rtf)))")
 
         let text = results.map { $0.text }.joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)

@@ -1,9 +1,10 @@
 import Cocoa
-import OSLog
 
 @main
 enum DictlyMain {
     static func main() {
+        AppDiagnostics.shared.start()
+
         let app = NSApplication.shared
         let delegate = AppDelegate()
         // Hold a strong reference so the delegate isn't released before the runloop starts.
@@ -17,7 +18,7 @@ enum DictlyMain {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
-    static let log = Logger(subsystem: "com.mydear.voicetotext", category: "App")
+    static let log = AppLogger(category: "App")
 
     private var menuBarController: MenuBarController?
     private var dictationCoordinator: DictationCoordinator?
@@ -25,6 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var onboardingWindowController: OnboardingWindowController?
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
+        Self.log.notice("Application did finish launching")
+
         let coordinator = DictationCoordinator()
         self.dictationCoordinator = coordinator
 
@@ -52,6 +55,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        Self.log.notice("Application will terminate")
+        AppDiagnostics.shared.stop()
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }

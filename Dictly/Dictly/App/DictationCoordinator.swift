@@ -1,13 +1,12 @@
 import AppKit
 import Combine
-import OSLog
 
 /// Top-level orchestrator. Holds the long-lived components and routes the
 /// hotkey → record → transcribe → insert pipeline.
 @MainActor
 final class DictationCoordinator {
 
-    private static let log = Logger(subsystem: "com.mydear.voicetotext", category: "Coordinator")
+    private static let log = AppLogger(category: "Coordinator")
 
     enum Phase: Equatable {
         case idle
@@ -92,7 +91,7 @@ final class DictationCoordinator {
 
     func prepareModelInBackground() async {
         let id = Settings.shared.modelID
-        Self.log.info("Preparing model \(id, privacy: .public)")
+        Self.log.info("Preparing model \(id)")
         phase.send(.modelLoading(progress: 0))
         do {
             try await transcriber.prepare(modelID: id) { [weak self] p in
@@ -101,7 +100,7 @@ final class DictationCoordinator {
             isModelReady = true
             phase.send(.idle)
         } catch {
-            Self.log.error("Model load failed: \(error.localizedDescription, privacy: .public)")
+            Self.log.error("Model load failed: \(error.localizedDescription)")
             phase.send(.error(error.localizedDescription))
         }
     }
@@ -156,7 +155,7 @@ final class DictationCoordinator {
             if Settings.shared.showHUD { hud.show(state: .recording) }
         } catch {
             let nsError = error as NSError
-            Self.log.error("recorder.start failed: code=\(nsError.code) domain=\(nsError.domain, privacy: .public) desc=\(error.localizedDescription, privacy: .public)")
+            Self.log.error("recorder.start failed: code=\(nsError.code) domain=\(nsError.domain) desc=\(error.localizedDescription)")
             let friendly = Self.friendlyAudioErrorMessage(for: nsError)
             phase.send(.error(friendly))
             hud.show(state: .error(friendly))
@@ -201,7 +200,7 @@ final class DictationCoordinator {
         do {
             let transcribeStart = CFAbsoluteTimeGetCurrent()
             guard let raw = try await transcriber.transcribe(samples: samples, language: language, fallbackCount: fallbackCount) else {
-                Self.log.notice("Transcribe returned empty for \(samples.count) samples (lang=\(language, privacy: .public))")
+                Self.log.notice("Transcribe returned empty for \(samples.count) samples (lang=\(language))")
                 phase.send(.error("No speech detected"))
                 hud.show(state: .error("No speech detected"))
                 hud.hideAfter(seconds: 1.9)
@@ -209,7 +208,7 @@ final class DictationCoordinator {
                 return
             }
             let transcribeSec = CFAbsoluteTimeGetCurrent() - transcribeStart
-            Self.log.info("Transcribe ok: \"\(raw, privacy: .public)\"")
+            Self.log.info("Transcribe ok: \(raw.count) chars")
 
             let postStart = CFAbsoluteTimeGetCurrent()
             let processed = (try? await postProcessor.process(raw, language: language)) ?? raw
@@ -226,7 +225,7 @@ final class DictationCoordinator {
             let audioSec = Double(samples.count) / AudioRecorder.targetSampleRate
             // Single-line summary at `.notice` so it shows in Xcode console and
             // Console.app by default (no need to enable "Info messages").
-            Self.log.notice("⏱️ pipeline: total=\(totalSec, format: .fixed(precision: 2))s (transcribe=\(transcribeSec, format: .fixed(precision: 2))s · post=\(postSec, format: .fixed(precision: 2))s · insert=\(insertSec, format: .fixed(precision: 2))s) for \(audioSec, format: .fixed(precision: 2))s audio")
+            Self.log.notice("pipeline: total=\(String(format: "%.2f", totalSec))s (transcribe=\(String(format: "%.2f", transcribeSec))s post=\(String(format: "%.2f", postSec))s insert=\(String(format: "%.2f", insertSec))s) for \(String(format: "%.2f", audioSec))s audio")
 
             switch outcome {
             case .insertedAutomatically:
@@ -242,7 +241,7 @@ final class DictationCoordinator {
             hud.hideAfter(seconds: 1.9)
             phase.send(.idle)
         } catch {
-            Self.log.error("Transcribe failed: \(error.localizedDescription, privacy: .public)")
+            Self.log.error("Transcribe failed: \(error.localizedDescription)")
             phase.send(.error(error.localizedDescription))
             hud.show(state: .error(error.localizedDescription))
             hud.hideAfter(seconds: 1.5)
