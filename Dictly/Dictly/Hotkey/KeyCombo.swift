@@ -47,34 +47,13 @@ struct KeyCombo: Codable, Equatable, Sendable {
     let keyCode: UInt16?
     let modifierFlags: UInt    // raw NSEvent.ModifierFlags value (deviceIndependentFlagsMask only)
 
-    /// Default hotkey on first launch.
-    ///
-    /// Two different defaults depending on distribution:
-    /// * **Direct builds** → `Fn` (modifier-only push-to-talk). Wispr-style UX,
-    ///   feels great on Apple keyboards. NSEvent global monitor may need
-    ///   Input Monitoring on some macOS versions, but on Direct distribution
-    ///   users are already comfortable granting extra permissions.
-    /// * **App Store builds** → `⌥Space` (Option + Space). Two-key combo
-    ///   registered via the Carbon `RegisterEventHotKey` API — works inside
-    ///   the App Sandbox with zero permission prompts. Chosen because it's
-    ///   memorable ("Option to talk, Space for speech"), free in virtually
-    ///   every productivity app, and works on every macOS keyboard layout.
-    ///   Plain `⌘D` was rejected (conflicts with Safari/Finder/Mail),
-    ///   `⌘⌥D` was rejected (three keys = awkward), `⌃Space` was rejected
-    ///   (conflicts with input-source cycling on multilingual setups, and
-    ///   Dictly is by definition multilingual). Alfred power-users who have
-    ///   already claimed `⌥Space` can rebind in Settings → Hotkey.
+    /// Default hotkey on first launch: `Fn` (modifier-only push-to-talk).
+    /// Wispr-style UX, feels great on Apple keyboards. The NSEvent global
+    /// monitor may need Input Monitoring on some macOS versions, but users
+    /// of the direct build are already comfortable granting extra permissions.
+    /// Users can rebind in Settings → Hotkey.
     static let defaultHotkey: KeyCombo = {
-        #if APP_STORE
-        return KeyCombo(
-            kind: .keyCombo,
-            solo: nil,
-            keyCode: UInt16(kVK_Space),
-            modifierFlags: NSEvent.ModifierFlags([.option]).rawValue
-        )
-        #else
         return KeyCombo(kind: .modifierOnly, solo: .fn, keyCode: nil, modifierFlags: 0)
-        #endif
     }()
 
     static func combo(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> KeyCombo {

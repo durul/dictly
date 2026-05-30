@@ -588,13 +588,7 @@ final class SettingsViewController: NSViewController {
             qualityButton.selectItem(at: idx)
         }
 
-        #if APP_STORE
-        autoInsertCheck.isEnabled = false
-        autoInsertCheck.state = .off
-        storeNoticeLabel.stringValue = "The Mac App Store version doesn't auto-paste — text goes to the clipboard, press ⌘V to paste. The full version with auto-paste is available from the website."
-        #else
         storeNoticeLabel.stringValue = "Auto-paste needs Accessibility access for this exact Dictly.app. If it stays red after granting access, remove Dictly from Accessibility and add /Applications/Dictly.app again."
-        #endif
     }
 
     private func refreshAccessibilityStatus(forceLog: Bool = false) {

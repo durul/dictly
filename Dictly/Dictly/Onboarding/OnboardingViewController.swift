@@ -9,36 +9,13 @@ import Combine
 @MainActor
 final class OnboardingViewController: NSViewController {
 
-    // MARK: - Feature flag (single switch — read carefully)
+    // MARK: - Accessibility step
 
-    /// Show the Universal Access (macOS Accessibility) permission step in
-    /// the onboarding flow for App Store builds.
-    ///
-    /// * **Direct builds** ALWAYS show it — auto-paste relies on the user
-    ///   granting Accessibility so `CGEvent` ⌘V can be posted into the
-    ///   focused app. This flag has no effect on Direct builds.
-    /// * **App Store builds** compile the auto-paste path out (see
-    ///   `TextInserter.swift`'s `#if APP_STORE` branch), so the permission
-    ///   technically isn't needed. We still ask for it by default so users
-    ///   coming from the website (Direct) and the App Store see the same
-    ///   onboarding screens.
-    ///
-    /// If App Store review rejects the build for prompting Accessibility
-    /// when the underlying functionality is compiled out, flip this to
-    /// `false` and the step disappears from the App Store onboarding —
-    /// Direct build is unaffected. That's the only edit needed; layout,
-    /// progress counter, and render() all consult `showUniversalAccessStep`
-    /// below.
-    private static let showUniversalAccessInAppStore = false
-
-    /// Effective flag: true if the UA step should appear in *this* build.
-    private static var showUniversalAccessStep: Bool {
-        #if APP_STORE
-        return showUniversalAccessInAppStore
-        #else
-        return true
-        #endif
-    }
+    /// The onboarding flow always shows the Accessibility (Universal Access)
+    /// permission step: auto-paste relies on the user granting Accessibility
+    /// so a `CGEvent` ⌘V can be posted into the focused app. Layout, the
+    /// progress counter, and `render()` all consult this flag.
+    private static let showUniversalAccessStep = true
 
     private weak var coordinator: DictationCoordinator?
     private let onFinish: () -> Void
@@ -141,11 +118,10 @@ final class OnboardingViewController: NSViewController {
         ])
 
         // IMPORTANT: only constrain steps that are actually inside `stepsStack`.
-        // If the UA step is hidden (App Store build with `showUniversalAccessStep`
-        // off), `uaStep` has no superview. Activating a constraint between two
-        // views with no common ancestor throws NSInternalInconsistencyException —
-        // on macOS 26.4 this terminates the app on launch (App Review caught
-        // this on submission v1.0 build 1, before we built the runtime gate).
+        // If the UA step is ever gated off, `uaStep` has no superview. Activating
+        // a constraint between two views with no common ancestor throws
+        // NSInternalInconsistencyException — on macOS 26.4 this terminates the app
+        // on launch, so we only constrain steps we actually added.
         var layoutSteps: [NSView] = [micStep]
         if Self.showUniversalAccessStep { layoutSteps.append(uaStep) }
         layoutSteps.append(modelStep)

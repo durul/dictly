@@ -7,9 +7,6 @@ import Carbon.HIToolbox
 /// Posting `CGEvent`s into other apps requires the user to grant **Accessibility** to Dictly
 /// in System Settings → Privacy & Security → Accessibility. Without it, we still copy to the
 /// clipboard and let the user paste manually (or surface the text in the HUD).
-///
-/// In `APP_STORE` builds the auto-paste path is compiled out: the App Store version is
-/// clipboard-only to avoid review friction around Accessibility entitlements.
 @MainActor
 final class TextInserter {
 
@@ -36,10 +33,6 @@ final class TextInserter {
             return .copiedToClipboard
         }
 
-        #if APP_STORE
-        // App Store build: never simulate paste. User pastes manually.
-        return .copiedToClipboard
-        #else
         guard PermissionsChecker.isAccessibilityGranted else {
             Self.log.notice("Accessibility not granted; leaving text in clipboard.")
             return .missingAccessibilityPermission
@@ -57,7 +50,6 @@ final class TextInserter {
         }
 
         return .insertedAutomatically
-        #endif
     }
 
     private func snapshot(pasteboard: NSPasteboard) -> [(NSPasteboard.PasteboardType, Data)] {
