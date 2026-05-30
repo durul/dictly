@@ -1,7 +1,6 @@
 import Foundation
 @preconcurrency import AVFoundation
 import CoreAudio
-import OSLog
 
 /// Captures microphone audio and produces a Whisper-ready buffer:
 /// 16 kHz, mono, Float32 PCM. Maintains a peak meter for the HUD.
@@ -20,7 +19,7 @@ import OSLog
 @MainActor
 final class AudioRecorder {
 
-    private static let log = Logger(subsystem: "com.mydear.voicetotext", category: "Audio")
+    private static let log = AppLogger(category: "Audio")
 
     static let targetSampleRate: Double = 16_000
 
@@ -77,7 +76,7 @@ final class AudioRecorder {
 
         state = .recording
         let inputFmt = engine.inputNode.outputFormat(forBus: 0)
-        Self.log.info("Recording started; engine.isRunning=\(self.engine.isRunning, privacy: .public) inputFormat=\(inputFmt.sampleRate, format: .fixed(precision: 0))Hz/\(inputFmt.channelCount)ch")
+        Self.log.info("Recording started; engine.isRunning=\(self.engine.isRunning) inputFormat=\(String(format: "%.0f", inputFmt.sampleRate))Hz/\(inputFmt.channelCount)ch")
     }
 
     /// Single attempt to spin up a fresh engine, bind to the default input,
@@ -139,12 +138,12 @@ final class AudioRecorder {
         for v in result { let a = v < 0 ? -v : v; if a > peak { peak = a } }
         let durationSec = Double(result.count) / Self.targetSampleRate
         Self.log.info(
-            "Recording stopped; samples=\(result.count) (\(durationSec, format: .fixed(precision: 2))s) peak=\(peak, format: .fixed(precision: 4)) tapCallbacks=\(self.tapCallbacks)"
+            "Recording stopped; samples=\(result.count) (\(String(format: "%.2f", durationSec))s) peak=\(String(format: "%.4f", peak)) tapCallbacks=\(self.tapCallbacks)"
         )
         if self.tapCallbacks == 0 {
             Self.log.notice("No tap callbacks fired — engine never delivered audio")
         } else if peak < 0.005 {
-            Self.log.notice("Mic captured near-silence (peak \(peak, format: .fixed(precision: 4)))")
+            Self.log.notice("Mic captured near-silence (peak \(String(format: "%.4f", peak)))")
         }
         return result
     }
@@ -167,13 +166,13 @@ final class AudioRecorder {
         if sourceFormat == nil {
             sourceFormat = buffer.format
             Self.log.info(
-                "First buffer: sampleRate=\(buffer.format.sampleRate, format: .fixed(precision: 0))Hz channels=\(buffer.format.channelCount) commonFormat=\(buffer.format.commonFormat.rawValue) interleaved=\(buffer.format.isInterleaved, privacy: .public) frames=\(buffer.frameLength)"
+                "First buffer: sampleRate=\(String(format: "%.0f", buffer.format.sampleRate))Hz channels=\(buffer.format.channelCount) commonFormat=\(buffer.format.commonFormat.rawValue) interleaved=\(buffer.format.isInterleaved) frames=\(buffer.frameLength)"
             )
         }
 
         let prePeak = peakOf(buffer: buffer)
         if tapCallbacks <= 3 {
-            Self.log.info("tap #\(self.tapCallbacks): frames=\(buffer.frameLength) prePeak=\(prePeak, format: .fixed(precision: 4))")
+            Self.log.info("tap #\(self.tapCallbacks): frames=\(buffer.frameLength) prePeak=\(String(format: "%.4f", prePeak))")
         }
 
         // Fast path: source already matches target (16 kHz Float32 mono — common for
@@ -199,7 +198,7 @@ final class AudioRecorder {
         if converter == nil {
             converter = AVAudioConverter(from: buffer.format, to: targetFormat)
             if converter == nil {
-                Self.log.error("Failed to create AVAudioConverter from \(buffer.format, privacy: .public) → \(self.targetFormat, privacy: .public)")
+                Self.log.error("Failed to create AVAudioConverter from \(buffer.format) to \(self.targetFormat)")
                 return
             }
         }
@@ -227,7 +226,7 @@ final class AudioRecorder {
             return nil
         }
         if status == .error {
-            Self.log.error("Converter error: \(error?.localizedDescription ?? "unknown", privacy: .public)")
+            Self.log.error("Converter error: \(error?.localizedDescription ?? "unknown")")
             return
         }
         if tapCallbacks <= 3 {
@@ -383,7 +382,7 @@ final class AudioRecorder {
         let initStatus = AudioUnitInitialize(unit)
 
         if setStatus == noErr {
-            log.info("bindInput: rebound \(currentID) → \(defaultID) hw=\(hwFormat.mSampleRate, format: .fixed(precision: 0))Hz/\(hwFormat.mChannelsPerFrame)ch syncStatus=\(syncStatus)")
+            log.info("bindInput: rebound \(currentID) -> \(defaultID) hw=\(String(format: "%.0f", hwFormat.mSampleRate))Hz/\(hwFormat.mChannelsPerFrame)ch syncStatus=\(syncStatus)")
         } else {
             log.error("bindInput: SetProperty failed, OSStatus=\(setStatus) (uninit=\(uninitStatus) init=\(initStatus))")
         }

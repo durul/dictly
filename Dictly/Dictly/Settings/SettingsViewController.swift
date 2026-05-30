@@ -13,6 +13,8 @@ final class SettingsViewController: NSViewController {
     private weak var coordinator: DictationCoordinator?
     private var subs = Set<AnyCancellable>()
     private var statusPollTimer: Timer?
+    private var appActivationObserver: NSObjectProtocol?
+    private var lastAccessibilityGranted: Bool?
 
     // Width applied to all "form" controls in the right column of each row, so
     // every row is the same width regardless of whether the control inside is a
@@ -33,7 +35,7 @@ final class SettingsViewController: NSViewController {
     private let hudPositionButton = NSPopUpButton()
 
     private let accessibilityStatus = NSTextField(labelWithString: "")
-    private let accessibilityButton = BrandButton(title: "Open Universal Access",
+    private let accessibilityButton = BrandButton(title: "Open Accessibility",
                                                    variant: .secondary, size: .sm)
     private let storeNoticeLabel = NSTextField(wrappingLabelWithString: "")
 
@@ -216,19 +218,33 @@ final class SettingsViewController: NSViewController {
 
     override func viewWillAppear() {
         super.viewWillAppear()
-        // Poll permission state (and the global-event counter) every second so the user
-        // sees the indicator turn green as soon as they grant Input Monitoring.
+        // Poll while the settings window is visible so the indicator turns green as
+        // soon as System Settings commits the Accessibility change.
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.refreshAccessibilityStatus() }
         }
         RunLoop.main.add(timer, forMode: .common)
         statusPollTimer = timer
+
+        appActivationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.refreshAccessibilityStatus(forceLog: true) }
+        }
+
+        refreshAccessibilityStatus(forceLog: true)
     }
 
     override func viewWillDisappear() {
         super.viewWillDisappear()
         statusPollTimer?.invalidate()
         statusPollTimer = nil
+        if let appActivationObserver {
+            NotificationCenter.default.removeObserver(appActivationObserver)
+            self.appActivationObserver = nil
+        }
     }
 
     private func sectionTitle(_ s: String) -> NSTextField {
@@ -577,15 +593,19 @@ final class SettingsViewController: NSViewController {
         autoInsertCheck.state = .off
         storeNoticeLabel.stringValue = "The Mac App Store version doesn't auto-paste — text goes to the clipboard, press ⌘V to paste. The full version with auto-paste is available from the website."
         #else
-        storeNoticeLabel.stringValue = "Auto-paste needs Universal Access. Grant Dictly access in System Settings → Privacy & Security → Accessibility."
+        storeNoticeLabel.stringValue = "Auto-paste needs Accessibility access for this exact Dictly.app. If it stays red after granting access, remove Dictly from Accessibility and add /Applications/Dictly.app again."
         #endif
     }
 
-    private func refreshAccessibilityStatus() {
+    private func refreshAccessibilityStatus(forceLog: Bool = false) {
         let granted = PermissionsChecker.isAccessibilityGranted
+        if forceLog || lastAccessibilityGranted != granted {
+            AppLogger(category: "Permissions").info("Accessibility status refreshed; granted=\(granted) bundlePath=\(Bundle.main.bundleURL.path)")
+            lastAccessibilityGranted = granted
+        }
         accessibilityStatus.stringValue = granted
-            ? "✓ Universal Access granted"
-            : "⚠ Universal Access not granted"
+            ? "Accessibility granted"
+            : "Accessibility not granted"
         accessibilityStatus.textColor = granted ? DesignTokens.goodInk : DesignTokens.danger
         accessibilityStatus.font = NSFont.systemFont(ofSize: 12, weight: .medium)
     }
@@ -627,10 +647,12 @@ final class SettingsViewController: NSViewController {
     }
 
     @objc private func openAccessibility(_ sender: Any?) {
-        PermissionsChecker.promptAccessibilityIfNeeded()
+        PermissionsChecker.promptAccessibilityIfNeeded(reason: "settings-button")
         PermissionsChecker.openAccessibilitySettings()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            self?.refreshAccessibilityStatus()
+        for delay in [0.5, 1.5, 3.0, 6.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.refreshAccessibilityStatus(forceLog: true)
+            }
         }
     }
 

@@ -1,6 +1,5 @@
 import AppKit
 import Carbon.HIToolbox
-import OSLog
 
 /// Inserts the recognized text into whatever app is currently focused.
 ///
@@ -14,7 +13,7 @@ import OSLog
 @MainActor
 final class TextInserter {
 
-    private static let log = Logger(subsystem: "com.mydear.voicetotext", category: "TextInsert")
+    private static let log = AppLogger(category: "TextInsert")
 
     enum Outcome {
         case insertedAutomatically
@@ -42,7 +41,7 @@ final class TextInserter {
         return .copiedToClipboard
         #else
         guard PermissionsChecker.isAccessibilityGranted else {
-            Self.log.notice("Accessibility not granted — leaving text in clipboard.")
+            Self.log.notice("Accessibility not granted; leaving text in clipboard.")
             return .missingAccessibilityPermission
         }
 

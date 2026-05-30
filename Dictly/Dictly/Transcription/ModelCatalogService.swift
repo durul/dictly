@@ -1,6 +1,5 @@
 import Foundation
 import Combine
-import OSLog
 
 /// Loads the WhisperKit model catalog from HuggingFace.
 ///
@@ -19,7 +18,7 @@ final class ModelCatalogService {
 
     static let shared = ModelCatalogService()
 
-    private static let log = Logger(subsystem: "com.mydear.voicetotext", category: "ModelCatalog")
+    private static let log = AppLogger(category: "ModelCatalog")
 
     /// Live published model list. Bundled model(s) are always first.
     let models = CurrentValueSubject<[ModelInfo], Never>(ModelInfo.bundledEntries)
@@ -54,7 +53,7 @@ final class ModelCatalogService {
                 return
             } catch {
                 if Task.isCancelled { return }
-                Self.log.error("Refresh failed: \(error.localizedDescription, privacy: .public)")
+                Self.log.error("Refresh failed: \(error.localizedDescription)")
                 self.lastError.send(error.localizedDescription)
                 self.isLoading.send(false)
             }
