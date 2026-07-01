@@ -97,11 +97,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static func centerOnActiveScreen(_ window: NSWindow) {
         let screen = NSScreen.main ?? NSScreen.screens.first
         guard let visible = screen?.visibleFrame else { window.center(); return }
-        let size = window.frame.size
+
+        // Clamp the window to the visible area before centring. The onboarding
+        // window is tall (790 pt); on smaller laptops an un-clamped tall window
+        // spills its title bar above the menu bar and its CTA below the Dock —
+        // which reads to users as "the onboarding never opened" (reported after
+        // a fresh install). Keeping it within the visible frame guarantees the
+        // whole window — including the Continue button — is reachable.
+        let margin: CGFloat = 24
+        var size = window.frame.size
+        size.width  = min(size.width,  visible.width  - margin)
+        size.height = min(size.height, visible.height - margin)
+
         let origin = NSPoint(
             x: visible.midX - size.width / 2,
             y: visible.midY - size.height / 2
         )
-        window.setFrameOrigin(origin)
+        window.setFrame(NSRect(origin: origin, size: size), display: true)
     }
 }

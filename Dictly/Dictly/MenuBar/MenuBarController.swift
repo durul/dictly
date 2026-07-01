@@ -8,13 +8,14 @@ import Combine
 /// menu-bar appearance (white on dark bar, black on light bar). `recording` (red accent
 /// dot) and `disabled` (red slash) are colored, so they're set as non-template.
 @MainActor
-final class MenuBarController {
+final class MenuBarController: NSObject, NSMenuDelegate {
 
     private weak var coordinator: DictationCoordinator?
     private let statusItem: NSStatusItem
     private var subscriptions = Set<AnyCancellable>()
     private var processingAnimationTimer: Timer?
     private var statusMenuItem: NSMenuItem?
+    private let micMenu = NSMenu()
 
     var onShowSettings: (() -> Void)?
     var onShowOnboarding: (() -> Void)?
@@ -30,6 +31,7 @@ final class MenuBarController {
     init(coordinator: DictationCoordinator) {
         self.coordinator = coordinator
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        super.init()
     }
 
     func install() {
@@ -46,6 +48,13 @@ final class MenuBarController {
         menu.addItem(NSMenuItem(title: "Permissions…",
                                 action: #selector(showOnboarding(_:)),
                                 keyEquivalent: "").configured { $0.target = self })
+
+        // Microphone picker — submenu rebuilt on open (devices come and go).
+        let micItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
+        micMenu.delegate = self
+        micItem.submenu = micMenu
+        menu.addItem(micItem)
+
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "About Dictly", action: #selector(about(_:)),
                                 keyEquivalent: "").configured { $0.target = self })
@@ -58,6 +67,26 @@ final class MenuBarController {
             .receive(on: RunLoop.main)
             .sink { [weak self] phase in self?.reflect(phase: phase) }
             .store(in: &subscriptions)
+
+        // Show the active dictation language (flag / "auto") next to the icon and
+        // keep it in sync as the user switches languages or toggles the feature.
+        statusItem.button?.imagePosition = .imageLeading
+        Settings.shared.didChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] in self?.updateLanguageIndicator() }
+            .store(in: &subscriptions)
+        updateLanguageIndicator()
+    }
+
+    /// When language switching is enabled, show the active language beside the
+    /// icon: a flag emoji, or "auto" for auto-detect. Hidden otherwise.
+    private func updateLanguageIndicator() {
+        guard let button = statusItem.button else { return }
+        if Settings.shared.secondaryLanguageEnabled {
+            button.title = " " + LanguageOption.menuBarLabel(for: Settings.shared.activeLanguage)
+        } else {
+            button.title = ""
+        }
     }
 
     private func reflect(phase: DictationCoordinator.Phase) {
@@ -124,6 +153,42 @@ final class MenuBarController {
         processingAnimationTimer?.invalidate()
         processingAnimationTimer = nil
         statusItem.button?.alphaValue = 1.0
+    }
+
+    // MARK: - Microphone picker
+
+    /// Rebuild the mic submenu each time it's about to open so freshly
+    /// connected/removed devices show up. "System Default" (UID nil) plus every
+    /// current input device, with a checkmark on the active choice.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === micMenu else { return }
+        menu.removeAllItems()
+
+        let devices = AudioDeviceManager.inputDevices()
+        guard !devices.isEmpty else {
+            let none = NSMenuItem(title: "No input devices found", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            menu.addItem(none)
+            return
+        }
+        let currentDefault = AudioDeviceManager.defaultInputDeviceID()
+        for dev in devices {
+            let item = NSMenuItem(title: dev.name, action: #selector(selectMic(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = dev.uid
+            item.state = (dev.id == currentDefault) ? .on : .off   // ✓ on the active input
+            menu.addItem(item)
+        }
+    }
+
+    @objc private func selectMic(_ sender: NSMenuItem) {
+        // Picking a mic sets it as the system default input; the recording engine
+        // then follows it. (We don't per-app rebind via AUHAL — that wouldn't
+        // re-engage proxied devices, which is the whole bug we're working around.)
+        guard let uid = sender.representedObject as? String,
+              let id = AudioDeviceManager.deviceID(forUID: uid) else { return }
+        AudioDeviceManager.setDefaultInputDevice(id)
+        Settings.shared.inputDeviceUID = uid
     }
 
     @objc private func showSettings(_ sender: Any?) { onShowSettings?() }

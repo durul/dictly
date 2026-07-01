@@ -18,6 +18,8 @@ final class DictationCoordinator {
     }
 
     let hotkey = HotkeyManager()
+    /// Optional second hotkey pinned to `Settings.secondaryLanguage` (GitHub #1).
+    let secondaryHotkey = HotkeyManager()
     let recorder = AudioRecorder()
     let inserter = TextInserter()
     let hud = RecordingHUDController()
@@ -31,6 +33,18 @@ final class DictationCoordinator {
     private(set) var isModelReady = false
     private var transcribeTask: Task<Void, Never>?
 
+    /// Polls for Accessibility while a modifier-only hotkey is set but not yet
+    /// trusted, so we can re-register the global monitor the moment it's granted —
+    /// no app relaunch required.
+    private var accessibilityWatchTimer: Timer?
+
+    /// Whether we've already shown the "grant Accessibility" alert this session,
+    /// so a user who's chosen "Not Now" isn't nagged on every dictation.
+    private var didPromptAccessibilityThisSession = false
+
+    /// Same, for the "your modifier-only hotkey needs Accessibility" startup warning.
+    private var didWarnModifierHotkeyThisSession = false
+
     init() {
         bind()
     }
@@ -42,6 +56,10 @@ final class DictationCoordinator {
 
         hotkey.onPress = { [weak self] in self?.hotkeyPressed() }
         hotkey.onRelease = { [weak self] in self?.hotkeyReleased() }
+
+        // The secondary hotkey doesn't record — it flips the active dictation
+        // language between the two chosen languages (GitHub #1).
+        secondaryHotkey.onPress = { [weak self] in self?.toggleActiveLanguage() }
 
         // Audio level updates flow straight to the HUD — they're a per-buffer
         // signal (10–40 Hz) that no other subscriber consumes. Re-emitting them
@@ -56,16 +74,32 @@ final class DictationCoordinator {
     func start() {
         applySettings()
         hotkey.start()
+        // Deferred to the next runloop tick so a modal alert never blocks launch.
+        DispatchQueue.main.async { [weak self] in self?.warnIfModifierHotkeyNeedsAccessibility() }
         Task { await prepareModelInBackground() }
     }
 
     func stop() {
         hotkey.stop()
+        secondaryHotkey.stop()
         transcribeTask?.cancel()
     }
 
     private func applySettings() {
         hotkey.update(combo: Settings.shared.hotkey)
+
+        // Reconcile the optional secondary hotkey. `stop()` is a safe no-op when
+        // it isn't running; `update` then `start` (which stops first) install
+        // cleanly with the current combo.
+        secondaryHotkey.stop()
+        if Settings.shared.secondaryLanguageEnabled {
+            secondaryHotkey.update(combo: Settings.shared.secondaryHotkey)
+            secondaryHotkey.start()
+        }
+
+        // Re-evaluate the Accessibility watch (the active hotkey may have changed
+        // to/from a modifier-only combo).
+        startAccessibilityWatchIfNeeded()
     }
 
     /// Translate raw Core Audio / AVFoundation errors into something a user can act on.
@@ -118,6 +152,15 @@ final class DictationCoordinator {
                 beginRecording()
             }
         }
+    }
+
+    /// Flip the active dictation language between the two chosen languages. Fires
+    /// `didChange`, which refreshes the menu-bar language indicator (the visible
+    /// feedback the user sees next to the icon).
+    private func toggleActiveLanguage() {
+        guard Settings.shared.secondaryLanguageEnabled else { return }
+        Settings.shared.secondaryLanguageActive.toggle()
+        Self.log.info("Active language switched to \(Settings.shared.activeLanguage)")
     }
 
     private func hotkeyReleased() {
@@ -181,7 +224,7 @@ final class DictationCoordinator {
             return
         }
 
-        let language = Settings.shared.language
+        let language = Settings.shared.activeLanguage
         let fallbackCount = Settings.shared.transcriptionQuality.fallbackCount
         phase.send(.transcribing)
         if Settings.shared.showHUD { hud.show(state: .transcribing) }
@@ -191,6 +234,97 @@ final class DictationCoordinator {
             await self?.runTranscription(samples: samples, language: language,
                                           fallbackCount: fallbackCount,
                                           pipelineStart: pipelineStart)
+        }
+    }
+
+    /// Shown once per session when auto-paste is blocked by missing Accessibility.
+    /// A modal alert is far harder to miss than the HUD flash, and gives the user
+    /// a one-click path to System Settings.
+    private func promptAccessibilityOnce() {
+        guard !didPromptAccessibilityThisSession else { return }
+        didPromptAccessibilityThisSession = true
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Dictly can't paste automatically yet"
+        alert.informativeText = """
+        Your dictation was copied to the clipboard — press ⌘V to paste it.
+
+        To let Dictly type into apps for you, grant it Accessibility access in \
+        System Settings → Privacy & Security → Accessibility, then add Dictly.
+        """
+        alert.addButton(withTitle: "Open Accessibility Settings")
+        alert.addButton(withTitle: "Not Now")
+
+        // The app is a menu-bar agent (.accessory); bring it forward so the alert
+        // is visible above whatever the user was dictating into.
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            PermissionsChecker.promptAccessibilityIfNeeded(reason: "dictation-blocked")
+            PermissionsChecker.openAccessibilitySettings()
+        }
+    }
+
+    /// A global `NSEvent` key monitor (the modifier-only hotkey path) only starts
+    /// receiving events once the app is trusted for Accessibility — and a monitor
+    /// installed *before* the grant stays dead. So while a modifier-only hotkey is
+    /// set but not trusted, poll; the instant access is granted, re-register the
+    /// monitors so the hotkey works without an app relaunch.
+    private func startAccessibilityWatchIfNeeded() {
+        accessibilityWatchTimer?.invalidate()
+        accessibilityWatchTimer = nil
+        guard Settings.shared.hotkey.kind == .modifierOnly else { return }   // Carbon combos don't need it
+        guard !PermissionsChecker.isAccessibilityGranted else { return }
+
+        let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.reRegisterHotkeysIfNowTrusted() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        accessibilityWatchTimer = timer
+    }
+
+    private func reRegisterHotkeysIfNowTrusted() {
+        guard PermissionsChecker.isAccessibilityGranted else { return }
+        accessibilityWatchTimer?.invalidate()
+        accessibilityWatchTimer = nil
+        Self.log.notice("Accessibility granted — re-registering hotkey monitors")
+        hotkey.stop();  hotkey.start()
+        if Settings.shared.secondaryLanguageEnabled {
+            secondaryHotkey.stop(); secondaryHotkey.start()
+        }
+    }
+
+    /// At launch, if the active hotkey is modifier-only (Fn, right Option…) and
+    /// Accessibility isn't granted, the global key monitor receives nothing and the
+    /// hotkey silently does nothing — the most confusing failure mode in the app.
+    /// Warn once, with a path to fix it. Key-combo hotkeys use Carbon and need no
+    /// permission, so they're exempt.
+    private func warnIfModifierHotkeyNeedsAccessibility() {
+        guard Settings.shared.didCompleteOnboarding else { return }   // onboarding already covers this
+        guard !didWarnModifierHotkeyThisSession else { return }
+        guard Settings.shared.hotkey.kind == .modifierOnly else { return }
+        guard !PermissionsChecker.isAccessibilityGranted else { return }
+        didWarnModifierHotkeyThisSession = true
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Your push-to-talk key needs Accessibility access"
+        alert.informativeText = """
+        “\(Settings.shared.hotkey.displayName)” is a modifier-only hotkey. macOS only \
+        delivers it to apps trusted for Accessibility, so recording won't start until you \
+        grant access.
+
+        Grant Dictly Accessibility access — or pick a regular key combination (e.g. ⌃⌥Space) \
+        in Settings, which works without any permission.
+        """
+        alert.addButton(withTitle: "Open Accessibility Settings")
+        alert.addButton(withTitle: "Not Now")
+
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            PermissionsChecker.promptAccessibilityIfNeeded(reason: "modifier-hotkey")
+            PermissionsChecker.openAccessibilitySettings()
         }
     }
 
@@ -231,14 +365,20 @@ final class DictationCoordinator {
             case .insertedAutomatically:
                 phase.send(.inserted)
                 hud.show(state: .inserted(words: words, app: frontApp))
+                hud.hideAfter(seconds: 1.9)
             case .copiedToClipboard:
                 phase.send(.inserted)
                 hud.show(state: .copiedToClipboard)
+                hud.hideAfter(seconds: 1.9)
             case .missingAccessibilityPermission:
+                // Auto-paste was on but Accessibility isn't granted. The HUD flash
+                // alone is too easy to miss (it vanished before the user could read
+                // it), so keep it up longer AND surface a one-time actionable alert.
                 phase.send(.inserted)
                 hud.show(state: .needsAccessibility)
+                hud.hideAfter(seconds: 5)
+                promptAccessibilityOnce()
             }
-            hud.hideAfter(seconds: 1.9)
             phase.send(.idle)
         } catch {
             Self.log.error("Transcribe failed: \(error.localizedDescription)")

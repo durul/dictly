@@ -4,14 +4,16 @@ import Carbon.HIToolbox
 /// System-wide hotkey listener. Uses **Carbon `RegisterEventHotKey`** — the same API
 /// every other macOS hotkey app uses (Alfred, Raycast, BetterTouchTool, KeyboardShortcuts,
 /// Sindre Sorhus's HotKey, …). The OS itself owns the hotkey registration and calls our
-/// handler, so there's no Input Monitoring / Accessibility permission to grant; the user
-/// just picks a key in settings and it works.
+/// handler, so the **Carbon (key-combo) path needs no Accessibility / Input Monitoring
+/// permission** — the user just picks a key in settings and it works.
 ///
 /// Carbon emits both `kEventHotKeyPressed` and `kEventHotKeyReleased`, so push-to-talk
 /// (hold to record / release to transcribe) is supported out of the box.
 ///
 /// Modifier-only hotkeys (Fn alone, right Option…) aren't representable as Carbon hotkeys,
-/// so for those we fall back to a `flagsChanged` event monitor.
+/// so for those we fall back to a global `flagsChanged` `NSEvent` monitor. Unlike Carbon,
+/// macOS only delivers global key-event monitors to apps trusted for **Accessibility** —
+/// so a modifier-only hotkey silently does nothing until the user grants that access.
 @MainActor
 final class HotkeyManager {
 
@@ -22,7 +24,6 @@ final class HotkeyManager {
 
     private var combo: KeyCombo = .defaultHotkey
     private var hotKeyRef: EventHotKeyRef?
-    private var hotKeyHandler: EventHandlerRef?
     private var modifierMonitor: Any?
     private var modifierLocalMonitor: Any?
     private var isHeld = false
@@ -32,6 +33,12 @@ final class HotkeyManager {
     /// in the event payload.
     nonisolated(unsafe) private static var registry: [UInt32: WeakBox] = [:]
     nonisolated(unsafe) private static var nextID: UInt32 = 1
+    /// The Carbon event handler is installed ONCE on the app event target and shared
+    /// by every `HotkeyManager` instance. Installing it per instance makes the second
+    /// hotkey's `InstallEventHandler` fail with `eventHandlerAlreadyInstalledErr`
+    /// (-9866), so that hotkey never fires. Events route to the right instance via
+    /// `registry`, keyed on the hotkey id.
+    nonisolated(unsafe) private static var sharedHandlerRef: EventHandlerRef?
     private final class WeakBox { weak var manager: HotkeyManager?; init(_ m: HotkeyManager) { manager = m } }
     private var hotKeyID: UInt32 = 0
 
@@ -66,10 +73,6 @@ final class HotkeyManager {
             UnregisterEventHotKey(ref)
             hotKeyRef = nil
         }
-        if let h = hotKeyHandler {
-            RemoveEventHandler(h)
-            hotKeyHandler = nil
-        }
         if hotKeyID != 0 {
             Self.registry.removeValue(forKey: hotKeyID)
             hotKeyID = 0
@@ -82,7 +85,6 @@ final class HotkeyManager {
 
     deinit {
         if let ref = hotKeyRef { UnregisterEventHotKey(ref) }
-        if let h = hotKeyHandler { RemoveEventHandler(h) }
         if let m = modifierMonitor { NSEvent.removeMonitor(m) }
         if let m = modifierLocalMonitor { NSEvent.removeMonitor(m) }
     }
@@ -108,8 +110,7 @@ final class HotkeyManager {
         if nsModifiers.contains(.control) { carbonModifiers |= UInt32(controlKey) }
         if nsModifiers.contains(.shift)   { carbonModifiers |= UInt32(shiftKey) }
 
-        // Install our shared handler exactly once per manager. Carbon delivers BOTH
-        // press and release events for any hotkey we register.
+        // Carbon delivers BOTH press and release events for any hotkey we register.
         let signature: OSType = 0x44_43_54_4C  // "DCTL" — arbitrary 4cc unique to us
         let hkID = EventHotKeyID(signature: signature, id: id)
         var ref: EventHotKeyRef?
@@ -127,6 +128,22 @@ final class HotkeyManager {
         }
         hotKeyRef = ref
 
+        // Install the process-wide handler once (shared across all hotkeys/instances).
+        guard Self.installSharedCarbonHandlerIfNeeded() else {
+            UnregisterEventHotKey(ref!)
+            hotKeyRef = nil
+            Self.registry.removeValue(forKey: id)
+            hotKeyID = 0
+            return
+        }
+    }
+
+    /// Installs the single Carbon hot-key event handler on the app event target the
+    /// first time any hotkey is registered; later calls are no-ops. Returns whether
+    /// the handler is in place. See `sharedHandlerRef` for why this must be global.
+    @discardableResult
+    private static func installSharedCarbonHandlerIfNeeded() -> Bool {
+        if sharedHandlerRef != nil { return true }
         var eventSpecs = [
             EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
                           eventKind: UInt32(kEventHotKeyPressed)),
@@ -134,20 +151,19 @@ final class HotkeyManager {
                           eventKind: UInt32(kEventHotKeyReleased))
         ]
         var handlerRef: EventHandlerRef?
-        let handlerStatus = InstallEventHandler(
+        let status = InstallEventHandler(
             GetApplicationEventTarget(),
             carbonHotKeyHandler,
             eventSpecs.count, &eventSpecs,
             nil,
             &handlerRef
         )
-        guard handlerStatus == noErr else {
-            Self.log.error("InstallEventHandler failed with OSStatus \(handlerStatus)")
-            UnregisterEventHotKey(ref!)
-            hotKeyRef = nil
-            return
+        guard status == noErr else {
+            log.error("InstallEventHandler failed with OSStatus \(status)")
+            return false
         }
-        hotKeyHandler = handlerRef
+        sharedHandlerRef = handlerRef
+        return true
     }
 
     fileprivate func dispatchCarbonEvent(kind: UInt32) {
@@ -165,8 +181,10 @@ final class HotkeyManager {
     // MARK: - Modifier-only path
     //
     // Carbon doesn't know how to register a "modifier alone" as a hotkey, so for Fn /
-    // right Option / right Shift we keep an `NSEvent` flagsChanged monitor. These don't
-    // require Input Monitoring — modifier flag changes are observable by every app.
+    // right Option / right Shift we keep a global `NSEvent` flagsChanged monitor. macOS
+    // only delivers global key-event monitors (flagsChanged included) to apps trusted for
+    // Accessibility — so this global path is dead until the user grants Accessibility. The
+    // local monitor still fires while Dictly is frontmost, but global capture needs the grant.
 
     private func installModifierMonitor() {
         let mask: NSEvent.EventTypeMask = [.flagsChanged]

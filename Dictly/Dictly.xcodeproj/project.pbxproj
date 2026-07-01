@@ -12,6 +12,7 @@
 
 /* Begin PBXFileReference section */
 		1AF6C4902FAC951000E7E55B /* Dictly.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Dictly.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1AF6CC012FAD000200E7E55B /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -37,6 +38,7 @@
 		1AF6C4872FAC951000E7E55B = {
 			isa = PBXGroup;
 			children = (
+				1AF6CC012FAD000200E7E55B /* Base.xcconfig */,
 				1AF6C4922FAC951000E7E55B /* Dictly */,
 				1AF6C4912FAC951000E7E55B /* Products */,
 			);
@@ -277,6 +279,7 @@
 		};
 		1AF6C49F2FAC951200E7E55B /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 1AF6CC012FAD000200E7E55B /* Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -313,6 +316,7 @@
 		};
 		1AF6C4A02FAC951200E7E55B /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 1AF6CC012FAD000200E7E55B /* Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;

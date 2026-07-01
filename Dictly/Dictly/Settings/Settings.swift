@@ -13,7 +13,12 @@ final class Settings {
         static let hotkeyData = "hotkey.data.v1"
         static let hotkeyMode = "hotkey.mode"
         static let language = "transcription.language"
+        static let secondaryLanguageEnabled = "transcription.language.secondary.enabled"
+        static let secondaryLanguage = "transcription.language.secondary"
+        static let secondaryLanguageActive = "transcription.language.secondary.active"
+        static let secondaryHotkeyData = "hotkey.secondary.data.v1"
         static let modelID = "transcription.modelID"
+        static let inputDeviceUID = "audio.inputDeviceUID"
         static let autoInsert = "behavior.autoInsert"
         static let restoreClipboard = "behavior.restoreClipboard"
         static let showHUD = "behavior.showHUD"
@@ -98,9 +103,75 @@ final class Settings {
     }
 
     /// ISO 639-1 code, or "auto" for Whisper auto-detection.
+    ///
+    /// Default for a fresh install is the user's **system language** (if Whisper
+    /// supports it), falling back to "auto". Previously this was hard-coded to
+    /// "ru", which silently force-decoded every non-Russian user's speech as
+    /// Russian — i.e. the app looked completely broken for them (GitHub #4).
     var language: String {
-        get { defaults.string(forKey: Keys.language) ?? "ru" }
+        get { defaults.string(forKey: Keys.language) ?? Self.systemDefaultLanguage }
         set { defaults.set(newValue, forKey: Keys.language); didChange.send() }
+    }
+
+    /// The macOS preferred language mapped to a Whisper-supported ISO 639-1 code,
+    /// or "auto" when none of the user's preferred languages is in our list.
+    static let systemDefaultLanguage: String = {
+        let supported = Set(LanguageOption.popular.map(\.code))
+        for identifier in Locale.preferredLanguages {
+            let code = String(identifier.prefix(2)).lowercased()
+            if supported.contains(code) { return code }
+        }
+        return "auto"
+    }()
+
+    // MARK: Language switching (GitHub #1)
+    //
+    // A dedicated hotkey flips the *active* dictation language between two chosen
+    // languages — `language` (primary) and `secondaryLanguage`. The active one is
+    // used for every dictation and shown next to the menu-bar icon. Lets bilingual
+    // users switch explicitly instead of relying on Whisper auto-detect, which
+    // mis-guesses on short utterances.
+
+    /// Master switch for the language-switch hotkey + menu-bar indicator. Off by default.
+    var secondaryLanguageEnabled: Bool {
+        get { defaults.bool(forKey: Keys.secondaryLanguageEnabled) }
+        set { defaults.set(newValue, forKey: Keys.secondaryLanguageEnabled); didChange.send() }
+    }
+
+    /// The second of the two switchable languages. Defaults to English.
+    var secondaryLanguage: String {
+        get { defaults.string(forKey: Keys.secondaryLanguage) ?? "en" }
+        set { defaults.set(newValue, forKey: Keys.secondaryLanguage); didChange.send() }
+    }
+
+    /// Whether the *second* language is currently the active one. Toggled by the
+    /// switch hotkey; persisted so the choice survives relaunch.
+    var secondaryLanguageActive: Bool {
+        get { defaults.bool(forKey: Keys.secondaryLanguageActive) }
+        set { defaults.set(newValue, forKey: Keys.secondaryLanguageActive); didChange.send() }
+    }
+
+    /// The language actually used for dictation right now: the second language
+    /// when the switch is on *and* active, otherwise the primary `language`.
+    var activeLanguage: String {
+        (secondaryLanguageEnabled && secondaryLanguageActive) ? secondaryLanguage : language
+    }
+
+    /// Hotkey that flips the active language between the two. Defaults to right Option.
+    var secondaryHotkey: KeyCombo {
+        get {
+            if let data = defaults.data(forKey: Keys.secondaryHotkeyData),
+               let combo = try? JSONDecoder().decode(KeyCombo.self, from: data) {
+                return combo
+            }
+            return KeyCombo(kind: .modifierOnly, solo: .rightOption, keyCode: nil, modifierFlags: 0)
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                defaults.set(data, forKey: Keys.secondaryHotkeyData)
+                didChange.send()
+            }
+        }
     }
 
     var modelID: String {
@@ -117,6 +188,14 @@ final class Settings {
             return raw
         }
         set { defaults.set(newValue, forKey: Keys.modelID); didChange.send() }
+    }
+
+    /// Stable UID of the chosen input device, or nil for the system default.
+    /// Lets the user pin a reliable mic instead of whatever macOS defaults to
+    /// (e.g. a Bluetooth headset, whose IO is slow to tear down between takes).
+    var inputDeviceUID: String? {
+        get { defaults.string(forKey: Keys.inputDeviceUID) }
+        set { defaults.set(newValue, forKey: Keys.inputDeviceUID); didChange.send() }
     }
 
     var autoInsert: Bool {

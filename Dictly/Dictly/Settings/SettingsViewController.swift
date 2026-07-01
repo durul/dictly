@@ -25,6 +25,10 @@ final class SettingsViewController: NSViewController {
     private let hotkeyControl: HotkeyRecorderControl
     private let modeButton = NSPopUpButton()
     private let languageButton = NSPopUpButton()
+    private let secondaryLanguageCheck = NSButton(checkboxWithTitle: "Switch between two languages with a hotkey",
+                                                  target: nil, action: nil)
+    private let secondaryLanguageButton = NSPopUpButton()
+    private let secondaryHotkeyControl: HotkeyRecorderControl
     private let qualityButton = NSPopUpButton()
     private let autoInsertCheck = NSButton(checkboxWithTitle: "Auto-paste into the focused app",
                                             target: nil, action: nil)
@@ -51,6 +55,7 @@ final class SettingsViewController: NSViewController {
     init(coordinator: DictationCoordinator) {
         self.coordinator = coordinator
         self.hotkeyControl = HotkeyRecorderControl(combo: Settings.shared.hotkey)
+        self.secondaryHotkeyControl = HotkeyRecorderControl(combo: Settings.shared.secondaryHotkey)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -122,6 +127,17 @@ final class SettingsViewController: NSViewController {
         modeHelp.preferredMaxLayoutWidth = 540
         outer.addArrangedSubview(modeHelp)
         outer.addArrangedSubview(makeRow(title: "Spoken language", control: languageButton))
+        outer.addArrangedSubview(secondaryLanguageCheck)
+        outer.addArrangedSubview(makeRow(title: "Second language", control: secondaryLanguageButton))
+        outer.addArrangedSubview(makeRow(title: "Switch-language hotkey", control: secondaryHotkeyControl))
+        let secondaryHelp = NSTextField(wrappingLabelWithString:
+            "Press this hotkey to flip the active language between your spoken " +
+            "language above and the second language. The active one is used for " +
+            "dictation and shown next to the menu-bar icon.")
+        secondaryHelp.font = NSFont.systemFont(ofSize: 11)
+        secondaryHelp.textColor = DesignTokens.inkMute
+        secondaryHelp.preferredMaxLayoutWidth = 540
+        outer.addArrangedSubview(secondaryHelp)
         outer.addArrangedSubview(makeRow(title: "Quality", control: qualityButton))
         let qualityHelp = NSTextField(wrappingLabelWithString:
             "Whisper occasionally derails on noisy or Bluetooth audio and " +
@@ -472,6 +488,20 @@ final class SettingsViewController: NSViewController {
         languageButton.target = self
         languageButton.action = #selector(languageChanged(_:))
 
+        secondaryLanguageButton.removeAllItems()
+        for opt in LanguageOption.popular {
+            secondaryLanguageButton.addItem(withTitle: opt.displayName)
+            secondaryLanguageButton.lastItem?.representedObject = opt.code
+        }
+        secondaryLanguageButton.target = self
+        secondaryLanguageButton.action = #selector(secondaryLanguageChanged(_:))
+        secondaryLanguageCheck.target = self
+        secondaryLanguageCheck.action = #selector(secondaryLanguageToggled(_:))
+        secondaryHotkeyControl.onChange = { [weak self] combo in
+            Settings.shared.secondaryHotkey = combo
+            self?.coordinator?.secondaryHotkey.update(combo: combo)
+        }
+
         autoInsertCheck.target = self
         autoInsertCheck.action = #selector(autoInsertChanged(_:))
         restoreClipboardCheck.target = self
@@ -576,6 +606,14 @@ final class SettingsViewController: NSViewController {
             languageButton.selectItem(at: idx)
         }
 
+        secondaryLanguageCheck.state = Settings.shared.secondaryLanguageEnabled ? .on : .off
+        let lang2 = Settings.shared.secondaryLanguage
+        if let idx = LanguageOption.popular.firstIndex(where: { $0.code == lang2 }) {
+            secondaryLanguageButton.selectItem(at: idx)
+        }
+        secondaryHotkeyControl.combo = Settings.shared.secondaryHotkey
+        updateSecondaryControlsEnabled()
+
         autoInsertCheck.state = Settings.shared.autoInsert ? .on : .off
         restoreClipboardCheck.state = Settings.shared.restoreClipboard ? .on : .off
         showHUDCheck.state = Settings.shared.showHUD ? .on : .off
@@ -612,6 +650,26 @@ final class SettingsViewController: NSViewController {
         if let code = sender.selectedItem?.representedObject as? String {
             Settings.shared.language = code
         }
+    }
+
+    @objc private func secondaryLanguageChanged(_ sender: NSPopUpButton) {
+        if let code = sender.selectedItem?.representedObject as? String {
+            Settings.shared.secondaryLanguage = code
+        }
+    }
+
+    @objc private func secondaryLanguageToggled(_ sender: NSButton) {
+        Settings.shared.secondaryLanguageEnabled = sender.state == .on
+        updateSecondaryControlsEnabled()
+    }
+
+    /// The second-language popup and hotkey recorder only matter when the
+    /// feature is on; dim them otherwise. (HotkeyRecorderControl is a plain
+    /// NSView, so we dim via alpha rather than `isEnabled`.)
+    private func updateSecondaryControlsEnabled() {
+        let on = Settings.shared.secondaryLanguageEnabled
+        secondaryLanguageButton.isEnabled = on
+        secondaryHotkeyControl.alphaValue = on ? 1.0 : 0.5
     }
 
     @objc private func autoInsertChanged(_ sender: NSButton) {

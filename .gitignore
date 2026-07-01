@@ -9,8 +9,9 @@ ARCHITECTURE.md
 # Design source-of-truth (icons, SVGs, design tokens spec, handoff doc)
 handoff/
 
-# Local-only signing config: keeps the personal Apple Team ID out of the
-# public project file. Build with `-xcconfig Local.xcconfig` (see the file).
+# Local-only signing config: keeps the personal Apple Team ID out of the public
+# repo. Base.xcconfig (committed) optionally includes it as the project's base
+# configuration, so Xcode and xcodebuild sign with the team automatically.
 Local.xcconfig
 
 # Local Claude/agent state

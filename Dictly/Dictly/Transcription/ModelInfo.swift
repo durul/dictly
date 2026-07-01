@@ -108,7 +108,7 @@ struct ModelInfo: Identifiable, Hashable, Sendable, Codable {
         return FileManager.default.fileExists(atPath: folder.path)
     }
 
-    /// Lookup helper. Searches the live catalog (which always contains `bundled`).Алло, алло, алло.
+    /// Lookup helper. Searches the live catalog (which always contains `bundled`).
     @MainActor
     static func info(for id: String) -> ModelInfo? {
         ModelCatalogService.shared.models.value.first { $0.id == id }
@@ -197,4 +197,33 @@ struct LanguageOption: Hashable, Sendable {
         LanguageOption(code: "ar", displayName: "العربية"),
         LanguageOption(code: "hi", displayName: "हिन्दी")
     ]
+
+    /// Flag emoji for a language code (best-effort), or `nil` for auto/unknown.
+    static func flag(for code: String) -> String? {
+        switch code {
+        case "ru": return "🇷🇺"
+        case "en": return "🇬🇧"
+        case "uk": return "🇺🇦"
+        case "es": return "🇪🇸"
+        case "de": return "🇩🇪"
+        case "fr": return "🇫🇷"
+        case "it": return "🇮🇹"
+        case "pt": return "🇵🇹"
+        case "pl": return "🇵🇱"
+        case "tr": return "🇹🇷"
+        case "zh": return "🇨🇳"
+        case "ja": return "🇯🇵"
+        case "ko": return "🇰🇷"
+        case "ar": return "🇸🇦"
+        case "hi": return "🇮🇳"
+        default:   return nil
+        }
+    }
+
+    /// Label for the menu-bar language indicator: "auto" for auto-detect, a flag
+    /// emoji for known languages, otherwise the uppercased ISO code.
+    static func menuBarLabel(for code: String) -> String {
+        if code == "auto" { return "auto" }
+        return flag(for: code) ?? code.uppercased()
+    }
 }

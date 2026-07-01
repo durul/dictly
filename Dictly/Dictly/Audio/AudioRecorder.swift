@@ -33,17 +33,23 @@ final class AudioRecorder {
     private(set) var currentLevel: Float = 0
     var onLevel: ((Float) -> Void)?
 
-    /// Recreated on every `start()` so the engine binds to the *current* default
-    /// input device. With a single shared instance, AirPods (or any device
-    /// connected after launch) report a 24 kHz mono format on the bus but
-    /// deliver bit-perfect zero audio — the engine is still pinned to whichever
-    /// device was default at first activation. Recreating fixes that.
+    /// A single long-lived engine, reused across recordings. We bind it to the
+    /// chosen input device explicitly (see `bindInput`), so we don't need to
+    /// recreate it per recording — and must not: recreating spins up a second
+    /// AUHAL unit on the same device while the previous one's IO thread is still
+    /// alive, which fails the next start with "there already is a thread" on
+    /// proxied devices (Bluetooth / Continuity / virtual mics).
     private var engine = AVAudioEngine()
     private var converter: AVAudioConverter?
     private var sourceFormat: AVAudioFormat?
     private var samples: [Float] = []
     private var startedAt: Date?
     private var tapCallbacks: Int = 0
+
+    /// System default input device the current `engine` was built for. When it
+    /// changes (e.g. the user picks a different mic), we recreate the engine so
+    /// AVAudioEngine re-queries the new device — but NOT on every recording.
+    private var lastConfiguredInputID: AudioDeviceID = 0
 
     private let targetFormat: AVAudioFormat = {
         AVAudioFormat(commonFormat: .pcmFormatFloat32,
@@ -57,20 +63,17 @@ final class AudioRecorder {
     func start() throws {
         guard state == .idle else { return }
 
-        // Tear down whatever the previous run left behind. Even if `stop()`
-        // already cleaned up, it's cheap to be defensive here.
-        if engine.isRunning { engine.stop() }
-        engine.inputNode.removeTap(onBus: 0)   // safe even if no tap is installed
-
         do {
             try bringUpEngine()
         } catch let error as NSError where error.code == -10868 {
-            // kAudioFormatUnsupportedFormatError. Almost always transient —
-            // the audio route is mid-transition (BT pairing handshake, default
-            // input device just changed because another app released its hold).
-            // Wait a beat, recreate the engine, try once more.
-            Self.log.notice("AVAudio start failed with -10868; retrying with fresh engine after 250ms")
+            // kAudioFormatUnsupportedFormatError. Almost always transient — the
+            // audio route is mid-transition (BT handshake, default input changed).
+            // As a last resort, recreate the engine from scratch and retry once.
+            Self.log.notice("AVAudio start failed with -10868; recreating engine and retrying after 250ms")
             usleep(250_000)
+            engine.inputNode.removeTap(onBus: 0)
+            if engine.isRunning { engine.stop() }
+            engine = AVAudioEngine()
             try bringUpEngine()
         }
 
@@ -79,25 +82,29 @@ final class AudioRecorder {
         Self.log.info("Recording started; engine.isRunning=\(self.engine.isRunning) inputFormat=\(String(format: "%.0f", inputFmt.sampleRate))Hz/\(inputFmt.channelCount)ch")
     }
 
-    /// Single attempt to spin up a fresh engine, bind to the default input,
-    /// install the tap, and start. Called by `start()` once, and once more
-    /// after a short delay if the first attempt hits -10868.
+    /// Prepare the engine and start capture.
+    ///
+    /// The engine is **reused** across recordings — recreating it per take spun up
+    /// a second AUHAL unit on the same device while the previous IO thread was
+    /// still alive ("there already is a thread" / StartIO err 35), fatal for
+    /// proxied devices (Bluetooth / Continuity / virtual mics). We recreate it
+    /// only when the system default input actually changes, so AVAudioEngine
+    /// re-queries the new device.
+    ///
+    /// We deliberately do NO manual AUHAL device rebinding here: the
+    /// uninit→set→init dance refused to re-engage proxied devices after the first
+    /// use. Device selection is applied by setting the *system default* input (see
+    /// the menu-bar mic picker); the plain input node then follows it.
     private func bringUpEngine() throws {
-        // Replace the engine entirely so it re-binds to whatever input device is
-        // currently the system default. AVAudioEngine's `inputNode` caches its
-        // device at first activation; if the user later connects AirPods, the
-        // shared engine keeps reporting samples from the original device — or
-        // worse, the bus advertises the new format but the buffers come back
-        // as zeros. A fresh `AVAudioEngine()` queries the *current* default input.
-        engine = AVAudioEngine()
+        if engine.isRunning { engine.stop() }
+        engine.inputNode.removeTap(onBus: 0)
 
-        // Even with a fresh engine, AVAudioEngine sometimes hands us an AUHAL
-        // input unit pointing at the *previous* device after a Bluetooth
-        // hot-swap (engine.isRunning=true, inputFormat looks plausible, but
-        // tapCallbacks=0). Force a rebind to the system's current default
-        // input — properly bracketed with uninit/init, the property only
-        // changes when the unit isn't running.
-        Self.bindInputToDefaultDevice(engine: engine)
+        let currentInput = AudioDeviceManager.defaultInputDeviceID() ?? 0
+        if currentInput != lastConfiguredInputID {
+            engine = AVAudioEngine()
+            lastConfiguredInputID = currentInput
+            Self.log.info("Engine (re)created for input device \(currentInput)")
+        }
 
         converter = nil
         sourceFormat = nil
@@ -106,15 +113,7 @@ final class AudioRecorder {
         startedAt = Date()
         tapCallbacks = 0
 
-        // After bindInputToDefaultDevice rebinds the AUHAL's underlying device
-        // via Core Audio APIs, AVAudioInputNode keeps the *previous* device's
-        // format in its cache. `format: nil` then installs the tap at the
-        // stale rate (e.g. 96k from the prior device) while the new HW is at
-        // 48k — AVAudioEngineGraph rejects the mismatch with -10868 at
-        // engine.start(). Read the AU's real current stream format and pass
-        // it explicitly so the bus negotiates against the truth.
-        let tapFormat = Self.actualInputFormat(engine: engine)
-            ?? engine.inputNode.outputFormat(forBus: 0)
+        let tapFormat = engine.inputNode.outputFormat(forBus: 0)
         engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { [weak self] buffer, _ in
             guard let self else { return }
             self.processTap(buffer: buffer)
@@ -292,128 +291,6 @@ final class AudioRecorder {
         if let started = startedAt, Date().timeIntervalSince(started) > Self.maxDurationSeconds {
             _ = stop()
         }
-    }
-
-    /// Pin the engine's input AudioUnit to the current system default input
-    /// device. We compare what the unit is *currently* pointing at vs. the
-    /// system default; if they match, do nothing (avoids touching the unit
-    /// when there's no need). When they differ, we uninitialize → set device
-    /// → reinitialize — the only valid sequence for changing
-    /// `kAudioOutputUnitProperty_CurrentDevice` (you can't set it on a
-    /// running unit, which is what produced the prior `-10877` errors).
-    ///
-    /// The property selector is `kAudioOutputUnitProperty_CurrentDevice` even
-    /// though we're configuring the *input*; that's the AUHAL convention,
-    /// the same property identifies the device for input and output units.
-    private static func bindInputToDefaultDevice(engine: AVAudioEngine) {
-        guard let unit = engine.inputNode.audioUnit else {
-            log.error("bindInput: inputNode has no audioUnit")
-            return
-        }
-
-        // What is the AU currently pointing at?
-        var currentID = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        AudioUnitGetProperty(unit,
-                             kAudioOutputUnitProperty_CurrentDevice,
-                             kAudioUnitScope_Global, 0, &currentID, &size)
-
-        // What is the system default input device?
-        var defaultID = AudioDeviceID(0)
-        var defSize = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        let getStatus = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &addr, 0, nil, &defSize, &defaultID
-        )
-        guard getStatus == noErr, defaultID != 0 else {
-            log.error("bindInput: read default input failed, OSStatus=\(getStatus)")
-            return
-        }
-
-        log.info("bindInput: AU=\(currentID) default=\(defaultID)")
-        if currentID == defaultID { return }   // nothing to do
-
-        // Bracketed property change: only valid while the unit is uninitialized.
-        let uninitStatus = AudioUnitUninitialize(unit)
-        var idVar = defaultID
-        let setStatus = AudioUnitSetProperty(
-            unit,
-            kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global,
-            0,
-            &idVar,
-            UInt32(MemoryLayout<AudioDeviceID>.size)
-        )
-
-        // Changing CurrentDevice updates the input scope (bus 1) to the new
-        // HW format, but the output scope keeps the *previous* device's
-        // client format. AVAudioEngine compares the two at graph init and
-        // panics with "Format mismatch: input hw 48k, client format 96k"
-        // followed by -10868 / "Failed to create tap, config change pending".
-        // Mirror the new HW format onto the output scope so the AU's two
-        // sides agree before we re-initialize.
-        var hwFormat = AudioStreamBasicDescription()
-        var hwSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
-        let hwReadStatus = AudioUnitGetProperty(
-            unit,
-            kAudioUnitProperty_StreamFormat,
-            kAudioUnitScope_Input,
-            1,
-            &hwFormat,
-            &hwSize
-        )
-        var syncStatus: OSStatus = noErr
-        if hwReadStatus == noErr {
-            syncStatus = AudioUnitSetProperty(
-                unit,
-                kAudioUnitProperty_StreamFormat,
-                kAudioUnitScope_Output,
-                1,
-                &hwFormat,
-                hwSize
-            )
-        }
-
-        let initStatus = AudioUnitInitialize(unit)
-
-        if setStatus == noErr {
-            log.info("bindInput: rebound \(currentID) -> \(defaultID) hw=\(String(format: "%.0f", hwFormat.mSampleRate))Hz/\(hwFormat.mChannelsPerFrame)ch syncStatus=\(syncStatus)")
-        } else {
-            log.error("bindInput: SetProperty failed, OSStatus=\(setStatus) (uninit=\(uninitStatus) init=\(initStatus))")
-        }
-    }
-
-    /// Reads the AUHAL input unit's actual output stream format directly via
-    /// the Core Audio property API. Necessary after `bindInputToDefaultDevice`
-    /// because `engine.inputNode.outputFormat(forBus: 0)` returns
-    /// AVAudioInputNode's *cached* format from before the device rebind —
-    /// pulling the truth from the AU avoids the cached/actual format
-    /// mismatch that otherwise trips AVAudioEngineGraph with -10868.
-    ///
-    /// Bus 1, output scope: the AUHAL's "audio going into the engine from the
-    /// hardware" side, which is what the tap on input bus 0 ultimately reads.
-    private static func actualInputFormat(engine: AVAudioEngine) -> AVAudioFormat? {
-        guard let unit = engine.inputNode.audioUnit else { return nil }
-        var asbd = AudioStreamBasicDescription()
-        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
-        let status = AudioUnitGetProperty(
-            unit,
-            kAudioUnitProperty_StreamFormat,
-            kAudioUnitScope_Output,
-            1,
-            &asbd,
-            &size
-        )
-        guard status == noErr, asbd.mSampleRate > 0 else {
-            log.notice("actualInputFormat: AudioUnitGetProperty failed, OSStatus=\(status)")
-            return nil
-        }
-        return AVAudioFormat(streamDescription: &asbd)
     }
 }
 

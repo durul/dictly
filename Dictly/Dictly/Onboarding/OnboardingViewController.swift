@@ -49,6 +49,8 @@ final class OnboardingViewController: NSViewController {
                                                  sublabel: "Whisper",
                                                  ctaTitle: "Download model")
 
+    private let languagePopup = NSPopUpButton()
+
     private let footerLabel = NSTextField(labelWithString: "step 1 of 3")
     private let doneButton  = BrandButton(title: "Done", variant: .secondary, size: .md)
     private let paperGradient = CAGradientLayer()
@@ -82,6 +84,8 @@ final class OnboardingViewController: NSViewController {
         stepsStack.distribution = .fill
         stepsStack.spacing = 14
         stepsStack.translatesAutoresizingMaskIntoConstraints = false
+        let languageRow = makeLanguageRow()
+        stepsStack.addArrangedSubview(languageRow)
         stepsStack.addArrangedSubview(micStep)
         if Self.showUniversalAccessStep {
             stepsStack.addArrangedSubview(uaStep)
@@ -122,7 +126,7 @@ final class OnboardingViewController: NSViewController {
         // a constraint between two views with no common ancestor throws
         // NSInternalInconsistencyException — on macOS 26.4 this terminates the app
         // on launch, so we only constrain steps we actually added.
-        var layoutSteps: [NSView] = [micStep]
+        var layoutSteps: [NSView] = [languageRow, micStep]
         if Self.showUniversalAccessStep { layoutSteps.append(uaStep) }
         layoutSteps.append(modelStep)
         for step in layoutSteps {
@@ -148,6 +152,64 @@ final class OnboardingViewController: NSViewController {
     override func viewWillDisappear() {
         super.viewWillDisappear()
         stopAccessibilityPoll()
+    }
+
+    // MARK: - Language row
+
+    /// A paper card with a language picker, shown above the setup steps so a new
+    /// user explicitly chooses their spoken language up front. Defaults to the
+    /// system language (see `Settings.systemDefaultLanguage`); the picker just
+    /// makes it visible and changeable. Addresses GitHub #4, where a non-Russian
+    /// user's speech was silently decoded with the wrong language.
+    private func makeLanguageRow() -> NSView {
+        let card = NSView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.wantsLayer = true
+        card.layer?.backgroundColor = DesignTokens.card.cgColor
+        card.layer?.cornerRadius = DesignTokens.radius
+        card.layer?.cornerCurve = .continuous
+        card.layer?.borderWidth = 1
+        card.layer?.borderColor = DesignTokens.paperBorder.cgColor
+
+        let title = NSTextField(labelWithString: "Spoken language")
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        title.textColor = DesignTokens.ink
+
+        languagePopup.removeAllItems()
+        for opt in LanguageOption.popular {
+            languagePopup.addItem(withTitle: opt.displayName)
+            languagePopup.lastItem?.representedObject = opt.code
+        }
+        if let idx = LanguageOption.popular.firstIndex(where: { $0.code == Settings.shared.language }) {
+            languagePopup.selectItem(at: idx)
+        }
+        languagePopup.target = self
+        languagePopup.action = #selector(onboardingLanguageChanged(_:))
+        languagePopup.setContentHuggingPriority(.required, for: .horizontal)
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let row = NSStackView(views: [title, spacer, languagePopup])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 10
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
+        card.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.topAnchor.constraint(equalTo: card.topAnchor),
+            row.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            row.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+        ])
+        return card
+    }
+
+    @objc private func onboardingLanguageChanged(_ sender: NSPopUpButton) {
+        if let code = sender.selectedItem?.representedObject as? String {
+            Settings.shared.language = code
+        }
     }
 
     // MARK: - Privacy card
