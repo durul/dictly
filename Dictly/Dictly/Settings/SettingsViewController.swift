@@ -133,7 +133,8 @@ final class SettingsViewController: NSViewController {
         let secondaryHelp = NSTextField(wrappingLabelWithString:
             "Press this hotkey to flip the active language between your spoken " +
             "language above and the second language. The active one is used for " +
-            "dictation and shown next to the menu-bar icon.")
+            "dictation and shown next to the menu-bar icon. A bare-modifier hotkey " +
+            "(like the default right ⌥) needs Accessibility access to work.")
         secondaryHelp.font = NSFont.systemFont(ofSize: 11)
         secondaryHelp.textColor = DesignTokens.inkMute
         secondaryHelp.preferredMaxLayoutWidth = 540
@@ -498,8 +499,16 @@ final class SettingsViewController: NSViewController {
         secondaryLanguageCheck.target = self
         secondaryLanguageCheck.action = #selector(secondaryLanguageToggled(_:))
         secondaryHotkeyControl.onChange = { [weak self] combo in
+            guard let self else { return }
+            // The two hotkeys must differ: with one key on both, every dictation
+            // press would also flip the language (both monitors see the same event).
+            guard combo != Settings.shared.hotkey else {
+                self.secondaryHotkeyControl.combo = Settings.shared.secondaryHotkey
+                self.showDuplicateHotkeyAlert()
+                return
+            }
             Settings.shared.secondaryHotkey = combo
-            self?.coordinator?.secondaryHotkey.update(combo: combo)
+            self.coordinator?.secondaryHotkey.update(combo: combo)
         }
 
         autoInsertCheck.target = self
@@ -529,8 +538,16 @@ final class SettingsViewController: NSViewController {
         accessibilityButton.action = #selector(openAccessibility(_:))
 
         hotkeyControl.onChange = { [weak self] combo in
+            guard let self else { return }
+            // Mirror of the secondary-hotkey guard: the two must stay distinct.
+            guard !(Settings.shared.secondaryLanguageEnabled
+                    && combo == Settings.shared.secondaryHotkey) else {
+                self.hotkeyControl.combo = Settings.shared.hotkey
+                self.showDuplicateHotkeyAlert()
+                return
+            }
             Settings.shared.hotkey = combo
-            self?.coordinator?.hotkey.update(combo: combo)
+            self.coordinator?.hotkey.update(combo: combo)
         }
     }
 
@@ -659,8 +676,31 @@ final class SettingsViewController: NSViewController {
     }
 
     @objc private func secondaryLanguageToggled(_ sender: NSButton) {
+        // Refuse to enable while both hotkeys share one combo (possible when the
+        // secondary was recorded earlier, while the feature was off).
+        if sender.state == .on, Settings.shared.secondaryHotkey == Settings.shared.hotkey {
+            sender.state = .off
+            showDuplicateHotkeyAlert()
+            return
+        }
         Settings.shared.secondaryLanguageEnabled = sender.state == .on
         updateSecondaryControlsEnabled()
+    }
+
+    /// Both hotkey recorders and the enable checkbox funnel here when a change
+    /// would leave the push-to-talk and switch-language hotkeys on one key; the
+    /// caller has already reverted the change.
+    private func showDuplicateHotkeyAlert() {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "That key is already taken"
+        alert.informativeText = "The push-to-talk hotkey and the switch-language hotkey must be different keys."
+        alert.addButton(withTitle: "OK")
+        if let window = view.window {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
+        }
     }
 
     /// The second-language popup and hotkey recorder only matter when the

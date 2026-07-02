@@ -158,11 +158,18 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     // MARK: - Microphone picker
 
     /// Rebuild the mic submenu each time it's about to open so freshly
-    /// connected/removed devices show up. "System Default" (UID nil) plus every
-    /// current input device, with a checkmark on the active choice.
+    /// connected/removed devices show up: every current input device, with a
+    /// checkmark on the one that is the system default input right now.
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu === micMenu else { return }
         menu.removeAllItems()
+
+        // Selection works by changing the SYSTEM default input (see `selectMic`) —
+        // machine-wide, every app follows. Say so instead of surprising the user.
+        let hint = NSMenuItem(title: "Sets the Mac's default microphone", action: nil, keyEquivalent: "")
+        hint.isEnabled = false
+        menu.addItem(hint)
+        menu.addItem(.separator())
 
         let devices = AudioDeviceManager.inputDevices()
         guard !devices.isEmpty else {
@@ -188,7 +195,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         guard let uid = sender.representedObject as? String,
               let id = AudioDeviceManager.deviceID(forUID: uid) else { return }
         AudioDeviceManager.setDefaultInputDevice(id)
-        Settings.shared.inputDeviceUID = uid
     }
 
     @objc private func showSettings(_ sender: Any?) { onShowSettings?() }

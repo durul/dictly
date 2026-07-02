@@ -47,15 +47,24 @@ final class HotkeyManager {
     private var awaitingRelease = false
 
     func update(combo: KeyCombo) {
+        // No-op when nothing changed. `Settings.didChange` re-applies settings on
+        // EVERY change — including from the language-switch hotkey's own callback,
+        // i.e. potentially while the user is HOLDING this very key mid push-to-talk.
+        // Wiping `isHeld` / re-registering here would swallow the upcoming release
+        // event and leave the recording running.
+        guard combo != self.combo else { return }
         self.combo = combo
         isHeld = false
         awaitingRelease = false
         // Re-install with the new combo if we were already running.
-        if hotKeyRef != nil || modifierMonitor != nil {
+        if isRunning {
             stop()
             start()
         }
     }
+
+    /// Whether this hotkey is currently installed (Carbon hotkey or modifier monitor).
+    var isRunning: Bool { hotKeyRef != nil || modifierMonitor != nil || modifierLocalMonitor != nil }
 
     func start() {
         stop()
@@ -85,6 +94,7 @@ final class HotkeyManager {
 
     deinit {
         if let ref = hotKeyRef { UnregisterEventHotKey(ref) }
+        if hotKeyID != 0 { Self.registry.removeValue(forKey: hotKeyID) }
         if let m = modifierMonitor { NSEvent.removeMonitor(m) }
         if let m = modifierLocalMonitor { NSEvent.removeMonitor(m) }
     }

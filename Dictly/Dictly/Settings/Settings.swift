@@ -18,7 +18,6 @@ final class Settings {
         static let secondaryLanguageActive = "transcription.language.secondary.active"
         static let secondaryHotkeyData = "hotkey.secondary.data.v1"
         static let modelID = "transcription.modelID"
-        static let inputDeviceUID = "audio.inputDeviceUID"
         static let autoInsert = "behavior.autoInsert"
         static let restoreClipboard = "behavior.restoreClipboard"
         static let showHUD = "behavior.showHUD"
@@ -188,14 +187,6 @@ final class Settings {
             return raw
         }
         set { defaults.set(newValue, forKey: Keys.modelID); didChange.send() }
-    }
-
-    /// Stable UID of the chosen input device, or nil for the system default.
-    /// Lets the user pin a reliable mic instead of whatever macOS defaults to
-    /// (e.g. a Bluetooth headset, whose IO is slow to tear down between takes).
-    var inputDeviceUID: String? {
-        get { defaults.string(forKey: Keys.inputDeviceUID) }
-        set { defaults.set(newValue, forKey: Keys.inputDeviceUID); didChange.send() }
     }
 
     var autoInsert: Bool {

@@ -2,16 +2,18 @@ import Foundation
 import CoreAudio
 
 /// A selectable audio input device. `uid` is stable across reconnects/relaunches
-/// (unlike `id`, which Core Audio can recycle), so we persist the UID.
+/// (unlike `id`, which Core Audio can recycle), so menu items carry the UID and
+/// resolve it back to a live id at click time.
 struct AudioInputDevice: Hashable, Sendable {
     let id: AudioDeviceID
     let uid: String
     let name: String
 }
 
-/// Thin Core Audio wrapper for enumerating input devices and resolving a stored
-/// UID back to a live `AudioDeviceID`. Used by the menu-bar picker and by
-/// `AudioRecorder` to bind the engine to the user's chosen mic.
+/// Thin Core Audio wrapper for enumerating input devices, resolving UIDs to live
+/// `AudioDeviceID`s, and reading/setting the system default input. Used by the
+/// menu-bar mic picker (which switches the system default) and by `AudioRecorder`
+/// (which follows the system default and rebuilds its engine when it changes).
 enum AudioDeviceManager {
 
     /// All current input-capable devices, in Core Audio's enumeration order.
@@ -57,6 +59,11 @@ enum AudioDeviceManager {
     /// Resolve a persisted UID to a currently-connected device id, if present.
     static func deviceID(forUID uid: String) -> AudioDeviceID? {
         inputDevices().first { $0.uid == uid }?.id
+    }
+
+    /// UID of a live device id, or nil. Stable across reconnects, unlike the id.
+    static func uid(for id: AudioDeviceID) -> String? {
+        stringProperty(id, kAudioDevicePropertyDeviceUID)
     }
 
     /// Make `id` the system default input device. We drive device selection this

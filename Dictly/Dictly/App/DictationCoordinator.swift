@@ -86,15 +86,17 @@ final class DictationCoordinator {
     }
 
     private func applySettings() {
+        // This runs on EVERY Settings.didChange — including from the language-switch
+        // hotkey's own callback, while the user may still be HOLDING the push-to-talk
+        // key — so it must reconcile without churning: `update` no-ops when the combo
+        // is unchanged, and start/stop happen only on actual enable-state transitions.
         hotkey.update(combo: Settings.shared.hotkey)
 
-        // Reconcile the optional secondary hotkey. `stop()` is a safe no-op when
-        // it isn't running; `update` then `start` (which stops first) install
-        // cleanly with the current combo.
-        secondaryHotkey.stop()
         if Settings.shared.secondaryLanguageEnabled {
             secondaryHotkey.update(combo: Settings.shared.secondaryHotkey)
-            secondaryHotkey.start()
+            if !secondaryHotkey.isRunning { secondaryHotkey.start() }
+        } else {
+            secondaryHotkey.stop()
         }
 
         // Re-evaluate the Accessibility watch (the active hotkey may have changed
@@ -274,7 +276,13 @@ final class DictationCoordinator {
     private func startAccessibilityWatchIfNeeded() {
         accessibilityWatchTimer?.invalidate()
         accessibilityWatchTimer = nil
-        guard Settings.shared.hotkey.kind == .modifierOnly else { return }   // Carbon combos don't need it
+        // Watch whenever ANY enabled hotkey is modifier-only — the language-switch
+        // hotkey's default (right ⌥) needs the grant exactly like a modifier-only
+        // push-to-talk key. Carbon key-combos don't need it.
+        let needsAccessibility = Settings.shared.hotkey.kind == .modifierOnly
+            || (Settings.shared.secondaryLanguageEnabled
+                && Settings.shared.secondaryHotkey.kind == .modifierOnly)
+        guard needsAccessibility else { return }
         guard !PermissionsChecker.isAccessibilityGranted else { return }
 
         let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
@@ -286,6 +294,9 @@ final class DictationCoordinator {
 
     private func reRegisterHotkeysIfNowTrusted() {
         guard PermissionsChecker.isAccessibilityGranted else { return }
+        // Re-registering stops/starts the hotkeys, which would swallow the pending
+        // push-to-talk release if a recording is in flight. Let the next tick do it.
+        guard recorder.state != .recording else { return }
         accessibilityWatchTimer?.invalidate()
         accessibilityWatchTimer = nil
         Self.log.notice("Accessibility granted — re-registering hotkey monitors")
@@ -295,25 +306,37 @@ final class DictationCoordinator {
         }
     }
 
-    /// At launch, if the active hotkey is modifier-only (Fn, right Option…) and
-    /// Accessibility isn't granted, the global key monitor receives nothing and the
+    /// At launch, if any enabled hotkey is modifier-only (Fn, right Option…) and
+    /// Accessibility isn't granted, its global key monitor receives nothing and the
     /// hotkey silently does nothing — the most confusing failure mode in the app.
-    /// Warn once, with a path to fix it. Key-combo hotkeys use Carbon and need no
-    /// permission, so they're exempt.
+    /// That covers BOTH the push-to-talk key and the optional language-switch key
+    /// (whose default, right ⌥, is modifier-only too). Warn once, with a path to
+    /// fix it. Key-combo hotkeys use Carbon and need no permission, so they're exempt.
     private func warnIfModifierHotkeyNeedsAccessibility() {
         guard Settings.shared.didCompleteOnboarding else { return }   // onboarding already covers this
         guard !didWarnModifierHotkeyThisSession else { return }
-        guard Settings.shared.hotkey.kind == .modifierOnly else { return }
         guard !PermissionsChecker.isAccessibilityGranted else { return }
+
+        let primaryDead = Settings.shared.hotkey.kind == .modifierOnly
+        let secondaryDead = Settings.shared.secondaryLanguageEnabled
+            && Settings.shared.secondaryHotkey.kind == .modifierOnly
+        guard primaryDead || secondaryDead else { return }
         didWarnModifierHotkeyThisSession = true
+
+        var dead: [String] = []
+        if primaryDead { dead.append("“\(Settings.shared.hotkey.displayName)” (push-to-talk)") }
+        if secondaryDead { dead.append("“\(Settings.shared.secondaryHotkey.displayName)” (language switch)") }
 
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Your push-to-talk key needs Accessibility access"
+        alert.messageText = primaryDead && secondaryDead
+            ? "Your hotkeys need Accessibility access"
+            : (primaryDead ? "Your push-to-talk key needs Accessibility access"
+                           : "Your language-switch key needs Accessibility access")
         alert.informativeText = """
-        “\(Settings.shared.hotkey.displayName)” is a modifier-only hotkey. macOS only \
-        delivers it to apps trusted for Accessibility, so recording won't start until you \
-        grant access.
+        \(dead.joined(separator: " and ")) \(dead.count == 1 ? "is a modifier-only hotkey" : "are modifier-only hotkeys"). \
+        macOS only delivers those to apps trusted for Accessibility, so \(dead.count == 1 ? "it" : "they") won't \
+        work until you grant access.
 
         Grant Dictly Accessibility access — or pick a regular key combination (e.g. ⌃⌥Space) \
         in Settings, which works without any permission.
@@ -361,6 +384,7 @@ final class DictationCoordinator {
             // Console.app by default (no need to enable "Info messages").
             Self.log.notice("pipeline: total=\(String(format: "%.2f", totalSec))s (transcribe=\(String(format: "%.2f", transcribeSec))s post=\(String(format: "%.2f", postSec))s insert=\(String(format: "%.2f", insertSec))s) for \(String(format: "%.2f", audioSec))s audio")
 
+            var needsAccessibilityPrompt = false
             switch outcome {
             case .insertedAutomatically:
                 phase.send(.inserted)
@@ -377,9 +401,12 @@ final class DictationCoordinator {
                 phase.send(.inserted)
                 hud.show(state: .needsAccessibility)
                 hud.hideAfter(seconds: 5)
-                promptAccessibilityOnce()
+                needsAccessibilityPrompt = true
             }
             phase.send(.idle)
+            // The alert is modal — send .idle first so the menu-bar icon isn't stuck
+            // on the previous phase for as long as the alert stays up.
+            if needsAccessibilityPrompt { promptAccessibilityOnce() }
         } catch {
             Self.log.error("Transcribe failed: \(error.localizedDescription)")
             phase.send(.error(error.localizedDescription))

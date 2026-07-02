@@ -33,11 +33,11 @@ final class AudioRecorder {
     private(set) var currentLevel: Float = 0
     var onLevel: ((Float) -> Void)?
 
-    /// A single long-lived engine, reused across recordings. We bind it to the
-    /// chosen input device explicitly (see `bindInput`), so we don't need to
-    /// recreate it per recording — and must not: recreating spins up a second
-    /// AUHAL unit on the same device while the previous one's IO thread is still
-    /// alive, which fails the next start with "there already is a thread" on
+    /// A single long-lived engine, reused across recordings. It follows the system
+    /// default input; we recreate it only when that device changes (see
+    /// `bringUpEngine`) — and must not recreate per recording: that spins up a
+    /// second AUHAL unit on the same device while the previous one's IO thread is
+    /// still alive, which fails the next start with "there already is a thread" on
     /// proxied devices (Bluetooth / Continuity / virtual mics).
     private var engine = AVAudioEngine()
     private var converter: AVAudioConverter?
@@ -46,10 +46,16 @@ final class AudioRecorder {
     private var startedAt: Date?
     private var tapCallbacks: Int = 0
 
-    /// System default input device the current `engine` was built for. When it
-    /// changes (e.g. the user picks a different mic), we recreate the engine so
-    /// AVAudioEngine re-queries the new device — but NOT on every recording.
+    /// System default input device the current `engine` was built for — numeric id
+    /// AND UID. When either changes we recreate the engine so AVAudioEngine
+    /// re-queries the new device — but NOT on every recording. Both are compared
+    /// because neither alone is reliable: Core Audio can recycle a numeric id for
+    /// a different device, and the same device can reconnect under a new id.
     private var lastConfiguredInputID: AudioDeviceID = 0
+    private var lastConfiguredInputUID: String?
+    /// Set when a start attempt failed — the engine may be half-configured, so the
+    /// next attempt rebuilds it instead of trusting `lastConfiguredInput*`.
+    private var engineNeedsRebuild = false
 
     private let targetFormat: AVAudioFormat = {
         AVAudioFormat(commonFormat: .pcmFormatFloat32,
@@ -64,17 +70,22 @@ final class AudioRecorder {
         guard state == .idle else { return }
 
         do {
-            try bringUpEngine()
-        } catch let error as NSError where error.code == -10868 {
-            // kAudioFormatUnsupportedFormatError. Almost always transient — the
-            // audio route is mid-transition (BT handshake, default input changed).
-            // As a last resort, recreate the engine from scratch and retry once.
-            Self.log.notice("AVAudio start failed with -10868; recreating engine and retrying after 250ms")
-            usleep(250_000)
-            engine.inputNode.removeTap(onBus: 0)
-            if engine.isRunning { engine.stop() }
-            engine = AVAudioEngine()
-            try bringUpEngine()
+            do {
+                try bringUpEngine()
+            } catch let error as NSError where error.code == -10868 {
+                // kAudioFormatUnsupportedFormatError. Almost always transient — the
+                // audio route is mid-transition (BT handshake, default input changed).
+                // As a last resort, recreate the engine from scratch and retry once.
+                Self.log.notice("AVAudio start failed with -10868; recreating engine and retrying after 250ms")
+                usleep(250_000)
+                engine.inputNode.removeTap(onBus: 0)
+                if engine.isRunning { engine.stop() }
+                engine = AVAudioEngine()
+                try bringUpEngine()
+            }
+        } catch {
+            engineNeedsRebuild = true
+            throw error
         }
 
         state = .recording
@@ -100,10 +111,14 @@ final class AudioRecorder {
         engine.inputNode.removeTap(onBus: 0)
 
         let currentInput = AudioDeviceManager.defaultInputDeviceID() ?? 0
-        if currentInput != lastConfiguredInputID {
+        let currentUID = currentInput != 0 ? AudioDeviceManager.uid(for: currentInput) : nil
+        if engineNeedsRebuild || currentInput != lastConfiguredInputID
+            || currentUID != lastConfiguredInputUID {
             engine = AVAudioEngine()
+            engineNeedsRebuild = false
             lastConfiguredInputID = currentInput
-            Self.log.info("Engine (re)created for input device \(currentInput)")
+            lastConfiguredInputUID = currentUID
+            Self.log.info("Engine (re)created for input device \(currentInput) uid=\(currentUID ?? "-")")
         }
 
         converter = nil
