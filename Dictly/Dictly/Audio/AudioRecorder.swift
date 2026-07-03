@@ -57,6 +57,28 @@ final class AudioRecorder {
     /// next attempt rebuilds it instead of trusting `lastConfiguredInput*`.
     private var engineNeedsRebuild = false
 
+    // MARK: Keep-warm (pre-roll)
+
+    /// Desired keep-warm state (mirrors `Settings.keepMicWarm`). When active, the
+    /// engine and tap keep running between recordings: a take starts instantly
+    /// (no AUHAL spin-up, no mic-hardware wake — 2–5 s cold on Apple Silicon) and
+    /// the tap retains the trailing `preRollCapacity` samples, so speech that
+    /// begins a beat before the hotkey press is still captured.
+    private var warmEnabled = false
+    /// Whether the engine is actually running warm right now. Distinct from
+    /// `warmEnabled`: warm is skipped for Bluetooth inputs, without mic
+    /// permission, and after a failed bring-up (falls back to on-demand starts).
+    private var warmActive = false
+    /// Converted 16 kHz mono samples captured while warm-idle; spliced into the
+    /// start of the next recording.
+    private var preRoll: [Float] = []
+    /// How many of the current take's samples came from the pre-roll. The
+    /// coordinator subtracts this when judging how long the key was held.
+    private(set) var lastPreRollCount = 0
+    private static let preRollCapacity = Int(AudioRecorder.targetSampleRate) / 2   // 0.5 s
+
+    private var configChangeObserver: NSObjectProtocol?
+
     private let targetFormat: AVAudioFormat = {
         AVAudioFormat(commonFormat: .pcmFormatFloat32,
                       sampleRate: AudioRecorder.targetSampleRate,
@@ -66,8 +88,54 @@ final class AudioRecorder {
 
     // MARK: - Lifecycle
 
+    init() {
+        // Rebuild a warm-idle engine when its device/config changes underneath it
+        // (mic unplugged, system default switched by the menu-bar picker, format
+        // change). In-flight recordings are left alone — they end via user action.
+        configChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main
+        ) { [weak self] note in
+            let changedID = (note.object as? AVAudioEngine).map(ObjectIdentifier.init)
+            Task { @MainActor [weak self] in
+                guard let self, let changedID,
+                      changedID == ObjectIdentifier(self.engine) else { return }
+                self.engineConfigurationChanged()
+            }
+        }
+    }
+
+    deinit {
+        if let o = configChangeObserver { NotificationCenter.default.removeObserver(o) }
+    }
+
     func start() throws {
         guard state == .idle else { return }
+
+        // Warm fast path: the engine is already capturing on the current default
+        // device — splice the pre-roll and flip state. This is the entire point
+        // of keep-warm: no spin-up inside the hotkey press, no first-word loss.
+        if warmActive && engine.isRunning,
+           (AudioDeviceManager.defaultInputDeviceID() ?? 0) == lastConfiguredInputID {
+            samples = preRoll
+            lastPreRollCount = preRoll.count
+            preRoll.removeAll(keepingCapacity: true)
+            startedAt = Date()
+            tapCallbacks = 0
+            currentLevel = 0
+            state = .recording
+            Self.log.info("Recording started (warm), pre-roll=\(self.lastPreRollCount) samples")
+            return
+        }
+        // Warm engine unusable (device changed / engine died) — take the cold
+        // path below; stop() re-engages warm afterwards via reconcileWarm().
+        if warmActive {
+            engine.inputNode.removeTap(onBus: 0)
+            if engine.isRunning { engine.stop() }
+            warmActive = false
+            preRoll.removeAll(keepingCapacity: false)
+            engineNeedsRebuild = true
+        }
+        lastPreRollCount = 0
 
         do {
             do {
@@ -140,9 +208,18 @@ final class AudioRecorder {
 
     func stop() -> [Float] {
         guard state == .recording else { return [] }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
         state = .idle
+
+        if warmActive && engine.isRunning {
+            // Keep-warm: leave the engine and tap running — the tap goes straight
+            // back to filling the pre-roll for the next take.
+        } else {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+            // Prepare-ahead (VoiceInk-style): preallocate now so the next cold
+            // start pays less inside the hotkey press.
+            engine.prepare()
+        }
 
         let result = samples
         samples.removeAll(keepingCapacity: false)
@@ -159,7 +236,61 @@ final class AudioRecorder {
         } else if peak < 0.005 {
             Self.log.notice("Mic captured near-silence (peak \(String(format: "%.4f", peak)))")
         }
+        // Warm state may need to change: settings toggled mid-take, device moved
+        // on/off Bluetooth, or warm needs (re-)engaging after a cold take.
+        reconcileWarm()
         return result
+    }
+
+    // MARK: - Keep-warm
+
+    /// Coordinator-facing switch, re-applied on every settings change.
+    func setWarmMode(_ enabled: Bool) {
+        warmEnabled = enabled
+        reconcileWarm()
+    }
+
+    /// Bring the idle engine up or down to match `warmEnabled`. No-op while a
+    /// recording is in flight — `stop()` re-invokes this afterwards.
+    private func reconcileWarm() {
+        guard state == .idle else { return }
+        let wantWarm = warmEnabled && Self.warmSupported()
+        if wantWarm && !warmActive {
+            do {
+                try bringUpEngine()
+                warmActive = true
+                Self.log.info("Mic keep-warm engaged")
+            } catch {
+                engineNeedsRebuild = true
+                Self.log.notice("Keep-warm bring-up failed (\(error.localizedDescription)); falling back to on-demand starts")
+            }
+        } else if !wantWarm && warmActive {
+            engine.inputNode.removeTap(onBus: 0)
+            if engine.isRunning { engine.stop() }
+            warmActive = false
+            preRoll.removeAll(keepingCapacity: false)
+            Self.log.info("Mic keep-warm disengaged")
+        }
+    }
+
+    /// Keep-warm needs mic permission (the stream opens immediately) and a
+    /// non-Bluetooth input — holding a capture stream open would pin a BT
+    /// headset to low-quality SCO call mode system-wide.
+    private static func warmSupported() -> Bool {
+        guard PermissionsChecker.microphoneStatus == .authorized else { return false }
+        guard let id = AudioDeviceManager.defaultInputDeviceID() else { return false }
+        return !AudioDeviceManager.isBluetooth(id)
+    }
+
+    private func engineConfigurationChanged() {
+        guard state == .idle, warmActive else { return }
+        Self.log.info("Engine configuration changed while warm-idle — rebuilding")
+        engine.inputNode.removeTap(onBus: 0)
+        if engine.isRunning { engine.stop() }
+        warmActive = false
+        preRoll.removeAll(keepingCapacity: false)
+        engineNeedsRebuild = true
+        reconcileWarm()
     }
 
     // MARK: - Tap
@@ -173,8 +304,10 @@ final class AudioRecorder {
 
     private func consume(buffer: AVAudioPCMBuffer) {
         // The tap can fire one last time after we've removed it; ignore those.
-        guard state == .recording else { return }
-        tapCallbacks += 1
+        // While warm-idle the tap stays installed and feeds the pre-roll instead.
+        let recording = state == .recording
+        guard recording || warmActive else { return }
+        if recording { tapCallbacks += 1 }
 
         // Snapshot source format once, mostly for diagnostics.
         if sourceFormat == nil {
@@ -185,7 +318,7 @@ final class AudioRecorder {
         }
 
         let prePeak = peakOf(buffer: buffer)
-        if tapCallbacks <= 3 {
+        if recording && tapCallbacks <= 3 {
             Self.log.info("tap #\(self.tapCallbacks): frames=\(buffer.frameLength) prePeak=\(String(format: "%.4f", prePeak))")
         }
 
@@ -196,12 +329,7 @@ final class AudioRecorder {
            buffer.format.channelCount == 1,
            buffer.format.commonFormat == .pcmFormatFloat32,
            let raw = buffer.floatChannelData?[0] {
-            let frames = Int(buffer.frameLength)
-            samples.reserveCapacity(samples.count + frames)
-            for i in 0..<frames { samples.append(raw[i]) }
-            currentLevel = min(1, prePeak * 1.5)
-            onLevel?(currentLevel)
-            checkMaxDuration()
+            ingest(raw, count: Int(buffer.frameLength), peak: prePeak)
             return
         }
 
@@ -243,7 +371,7 @@ final class AudioRecorder {
             Self.log.error("Converter error: \(error?.localizedDescription ?? "unknown")")
             return
         }
-        if tapCallbacks <= 3 {
+        if recording && tapCallbacks <= 3 {
             Self.log.info("tap #\(self.tapCallbacks): converter outFrames=\(outBuffer.frameLength)")
         }
 
@@ -252,16 +380,29 @@ final class AudioRecorder {
 
         let frames = Int(outBuffer.frameLength)
         var peak: Float = 0
-        samples.reserveCapacity(samples.count + frames)
         for i in 0..<frames {
-            let v = channel[i]
-            samples.append(v)
-            let abs = v < 0 ? -v : v
+            let abs = channel[i] < 0 ? -channel[i] : channel[i]
             if abs > peak { peak = abs }
         }
-        currentLevel = min(1, peak * 1.5)
-        onLevel?(currentLevel)
-        checkMaxDuration()
+        ingest(channel, count: frames, peak: peak)
+    }
+
+    /// Route converted samples into the recording — or, while warm-idle, into
+    /// the trailing pre-roll window.
+    private func ingest(_ data: UnsafePointer<Float>, count: Int, peak: Float) {
+        if state == .recording {
+            samples.reserveCapacity(samples.count + count)
+            for i in 0..<count { samples.append(data[i]) }
+            currentLevel = min(1, peak * 1.5)
+            onLevel?(currentLevel)
+            checkMaxDuration()
+        } else {
+            preRoll.reserveCapacity(preRoll.count + count)
+            for i in 0..<count { preRoll.append(data[i]) }
+            if preRoll.count > Self.preRollCapacity {
+                preRoll.removeFirst(preRoll.count - Self.preRollCapacity)
+            }
+        }
     }
 
     // MARK: - Helpers

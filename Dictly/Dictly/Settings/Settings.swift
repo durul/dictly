@@ -18,6 +18,7 @@ final class Settings {
         static let secondaryLanguageActive = "transcription.language.secondary.active"
         static let secondaryHotkeyData = "hotkey.secondary.data.v1"
         static let modelID = "transcription.modelID"
+        static let keepMicWarm = "audio.keepMicWarm"
         static let autoInsert = "behavior.autoInsert"
         static let restoreClipboard = "behavior.restoreClipboard"
         static let showHUD = "behavior.showHUD"
@@ -187,6 +188,16 @@ final class Settings {
             return raw
         }
         set { defaults.set(newValue, forKey: Keys.modelID); didChange.send() }
+    }
+
+    /// Keep the microphone stream open between dictations. Recording then starts
+    /// instantly and includes up to half a second captured BEFORE the hotkey
+    /// press, so mic-hardware wake-up (2–5 s cold on Apple Silicon) can't clip
+    /// the first word. Costs the persistent macOS mic indicator; the recorder
+    /// skips Bluetooth inputs (an open stream pins them to SCO call mode).
+    var keepMicWarm: Bool {
+        get { (defaults.object(forKey: Keys.keepMicWarm) as? Bool) ?? true }
+        set { defaults.set(newValue, forKey: Keys.keepMicWarm); didChange.send() }
     }
 
     var autoInsert: Bool {

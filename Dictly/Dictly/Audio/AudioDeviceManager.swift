@@ -66,6 +66,21 @@ enum AudioDeviceManager {
         stringProperty(id, kAudioDevicePropertyDeviceUID)
     }
 
+    /// Whether a device is a Bluetooth transport (classic or LE). Keep-warm skips
+    /// these: holding a capture stream open pins the headset to SCO call mode —
+    /// degraded output quality and battery drain — system-wide.
+    static func isBluetooth(_ id: AudioDeviceID) -> Bool {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var transport: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &transport) == noErr else { return false }
+        return transport == kAudioDeviceTransportTypeBluetooth
+            || transport == kAudioDeviceTransportTypeBluetoothLE
+    }
+
     /// Make `id` the system default input device. We drive device selection this
     /// way (rather than per-app AUHAL rebinding, which doesn't re-engage proxied
     /// devices) so the plain AVAudioEngine input path just picks it up.

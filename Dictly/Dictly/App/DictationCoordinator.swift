@@ -99,6 +99,10 @@ final class DictationCoordinator {
             secondaryHotkey.stop()
         }
 
+        // Keep-warm mic (instant starts + pre-roll). The recorder itself checks
+        // mic permission and skips Bluetooth inputs.
+        recorder.setWarmMode(Settings.shared.keepMicWarm)
+
         // Re-evaluate the Accessibility watch (the active hotkey may have changed
         // to/from a modifier-only combo).
         startAccessibilityWatchIfNeeded()
@@ -217,8 +221,12 @@ final class DictationCoordinator {
 
         // Whisper needs a real chunk of audio to detect speech reliably. A 100 ms tap on
         // the hotkey produces under that, and the model returns empty — surface a hint
-        // instead of "Silence" so the user knows to hold longer.
-        if durationSec < 0.4 {
+        // instead of "Silence" so the user knows to hold longer. Judge the hold by
+        // LIVE audio only: the keep-warm pre-roll pads every take with up to half a
+        // second captured before the press, which would let an accidental tap slip
+        // past this guard and transcribe ambient noise.
+        let liveDurationSec = Double(samples.count - recorder.lastPreRollCount) / AudioRecorder.targetSampleRate
+        if liveDurationSec < 0.4 {
             phase.send(.error("Hold longer"))
             hud.show(state: .error("Hold the hotkey while you speak"))
             hud.hideAfter(seconds: 1.9)

@@ -30,6 +30,8 @@ final class SettingsViewController: NSViewController {
     private let secondaryLanguageButton = NSPopUpButton()
     private let secondaryHotkeyControl: HotkeyRecorderControl
     private let qualityButton = NSPopUpButton()
+    private let keepMicWarmCheck = NSButton(checkboxWithTitle: "Keep microphone warm for instant start",
+                                            target: nil, action: nil)
     private let autoInsertCheck = NSButton(checkboxWithTitle: "Auto-paste into the focused app",
                                             target: nil, action: nil)
     private let restoreClipboardCheck = NSButton(checkboxWithTitle: "Restore clipboard after paste",
@@ -155,6 +157,17 @@ final class SettingsViewController: NSViewController {
         qualityHelp.textColor = DesignTokens.inkMute
         qualityHelp.preferredMaxLayoutWidth = 540
         outer.addArrangedSubview(qualityHelp)
+        outer.addArrangedSubview(keepMicWarmCheck)
+        let warmHelp = NSTextField(wrappingLabelWithString:
+            "Keeps the microphone stream open between dictations, so recording " +
+            "starts instantly and catches up to half a second before you press " +
+            "the hotkey — first words are never clipped. macOS shows the " +
+            "microphone indicator while Dictly runs. Bluetooth mics are excluded " +
+            "(an open stream would pin them to low-quality call audio).")
+        warmHelp.font = NSFont.systemFont(ofSize: 11)
+        warmHelp.textColor = DesignTokens.inkMute
+        warmHelp.preferredMaxLayoutWidth = 540
+        outer.addArrangedSubview(warmHelp)
         outer.addArrangedSubview(divider())
 
         // Models section
@@ -511,6 +524,8 @@ final class SettingsViewController: NSViewController {
             self.coordinator?.secondaryHotkey.update(combo: combo)
         }
 
+        keepMicWarmCheck.target = self
+        keepMicWarmCheck.action = #selector(keepMicWarmChanged(_:))
         autoInsertCheck.target = self
         autoInsertCheck.action = #selector(autoInsertChanged(_:))
         restoreClipboardCheck.target = self
@@ -631,6 +646,7 @@ final class SettingsViewController: NSViewController {
         secondaryHotkeyControl.combo = Settings.shared.secondaryHotkey
         updateSecondaryControlsEnabled()
 
+        keepMicWarmCheck.state = Settings.shared.keepMicWarm ? .on : .off
         autoInsertCheck.state = Settings.shared.autoInsert ? .on : .off
         restoreClipboardCheck.state = Settings.shared.restoreClipboard ? .on : .off
         showHUDCheck.state = Settings.shared.showHUD ? .on : .off
@@ -710,6 +726,10 @@ final class SettingsViewController: NSViewController {
         let on = Settings.shared.secondaryLanguageEnabled
         secondaryLanguageButton.isEnabled = on
         secondaryHotkeyControl.alphaValue = on ? 1.0 : 0.5
+    }
+
+    @objc private func keepMicWarmChanged(_ sender: NSButton) {
+        Settings.shared.keepMicWarm = sender.state == .on
     }
 
     @objc private func autoInsertChanged(_ sender: NSButton) {
